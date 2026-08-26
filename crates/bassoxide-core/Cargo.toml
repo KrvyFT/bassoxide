@@ -1,0 +1,9 @@
+[package]
+name = "bassoxide-core"
+version.workspace = true
+edition.workspace = true
+description = "Core data model for Bassoxide guitar tablature editor"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true

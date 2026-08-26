@@ -1,0 +1,67 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/bassoxide-core",
+    "crates/bassoxide-io",
+    "crates/bassoxide-layout",
+    "crates/bassoxide-render",
+    "crates/bassoxide-audio",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.75"
+
+[workspace.dependencies]
+# 内部 crate
+bassoxide-core = { path = "crates/bassoxide-core" }
+bassoxide-io = { path = "crates/bassoxide-io" }
+bassoxide-layout = { path = "crates/bassoxide-layout" }
+bassoxide-render = { path = "crates/bassoxide-render" }
+bassoxide-audio = { path = "crates/bassoxide-audio" }
+
+# 序列化
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 错误处理
+thiserror = "2"
+anyhow = "1"
+
+# GUI
+eframe = "0.31"
+egui = "0.31"
+
+# 音频
+cpal = "0.15"
+rustysynth = "1"
+
+# 日志
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# 二进制解析
+byteorder = "1"
+zip = "0.6"
+roxmltree = "0.20"
+midly = "0.5"
+
+[package]
+name = "bassoxide"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+bassoxide-core.workspace = true
+bassoxide-io.workspace = true
+bassoxide-layout.workspace = true
+bassoxide-render.workspace = true
+bassoxide-audio.workspace = true
+eframe.workspace = true
+egui.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+rfd = "0.15"

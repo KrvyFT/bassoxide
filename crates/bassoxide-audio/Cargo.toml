@@ -1,0 +1,11 @@
+[package]
+name = "bassoxide-audio"
+version.workspace = true
+edition.workspace = true
+description = "Audio engine with SoundFont synthesis and effects"
+
+[dependencies]
+bassoxide-core.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+# Phase 2 will add: cpal, rustysynth

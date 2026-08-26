@@ -1,0 +1,11 @@
+[package]
+name = "bassoxide-render"
+version.workspace = true
+edition.workspace = true
+description = "Rendering engine that paints layout results via egui"
+
+[dependencies]
+bassoxide-core.workspace = true
+bassoxide-layout.workspace = true
+egui.workspace = true
+tracing.workspace = true
