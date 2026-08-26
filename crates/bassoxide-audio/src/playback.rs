@@ -13,12 +13,20 @@ use bassoxide_core::song::Song;
 
 /// MIDI 事件
 #[derive(Debug, Clone)]
-pub struct MidiEvent {
-    pub tick: u32,
-    pub is_note_on: bool,
-    pub channel: i32,
-    pub key: i32,
-    pub velocity: i32,
+pub enum MidiEvent {
+    NoteOn { tick: u32, channel: i32, key: i32, velocity: i32 },
+    NoteOff { tick: u32, channel: i32, key: i32 },
+    ProgramChange { tick: u32, channel: i32, program: i32 },
+}
+
+impl MidiEvent {
+    pub fn tick(&self) -> u32 {
+        match self {
+            MidiEvent::NoteOn { tick, .. } => *tick,
+            MidiEvent::NoteOff { tick, .. } => *tick,
+            MidiEvent::ProgramChange { tick, .. } => *tick,
+        }
+    }
 }
 
 /// 播放器引擎
@@ -143,6 +151,14 @@ impl AudioEngine {
             }
             
             let channel = track.midi_channel as i32;
+            
+            // 为该轨道压入初始音色切换事件
+            events.push(MidiEvent::ProgramChange {
+                tick: 0,
+                channel,
+                program: track.midi_program as i32,
+            });
+            
             let mut current_tick = 0;
             
             for (m_idx, measure) in track.measures.iter().enumerate() {
@@ -155,21 +171,18 @@ impl AudioEngine {
                             if note.is_dead() { continue; }
                             
                             // Note On
-                            events.push(MidiEvent {
+                            events.push(MidiEvent::NoteOn {
                                 tick: current_tick + measure_tick,
-                                is_note_on: true,
                                 channel,
                                 key: note.midi_note as i32,
                                 velocity: note.velocity as i32,
                             });
                             
                             // Note Off
-                            events.push(MidiEvent {
+                            events.push(MidiEvent::NoteOff {
                                 tick: current_tick + measure_tick + beat.ticks(),
-                                is_note_on: false,
                                 channel,
                                 key: note.midi_note as i32,
-                                velocity: 0,
                             });
                         }
                     }
@@ -185,7 +198,7 @@ impl AudioEngine {
             }
         }
         
-        events.sort_by_key(|e| e.tick);
+        events.sort_by_key(|e| e.tick());
         events
     }
     
@@ -216,12 +229,17 @@ impl AudioEngine {
                 let current = st.current_tick;
                 
                 // 发送落入当前时间窗口的事件
-                while st.event_idx < st.events.len() && st.events[st.event_idx].tick <= current {
-                    let ev = &st.events[st.event_idx];
-                    if ev.is_note_on {
-                        synth.note_on(ev.channel, ev.key, ev.velocity);
-                    } else {
-                        synth.note_off(ev.channel, ev.key);
+                while st.event_idx < st.events.len() && st.events[st.event_idx].tick() <= current {
+                    match &st.events[st.event_idx] {
+                        MidiEvent::NoteOn { channel, key, velocity, .. } => {
+                            synth.note_on(*channel, *key, *velocity);
+                        }
+                        MidiEvent::NoteOff { channel, key, .. } => {
+                            synth.note_off(*channel, *key);
+                        }
+                        MidiEvent::ProgramChange { channel, program, .. } => {
+                            synth.program_change(*channel, *program);
+                        }
                     }
                     st.event_idx += 1;
                 }
@@ -270,7 +288,7 @@ impl AudioEngine {
         if was_playing {
             self.synth.reset();
             let cur = state.current_tick;
-            state.event_idx = state.events.iter().position(|e| e.tick > cur).unwrap_or(state.events.len());
+            state.event_idx = state.events.iter().position(|e| e.tick() > cur).unwrap_or(state.events.len());
         } else {
             state.event_idx = 0;
         }
