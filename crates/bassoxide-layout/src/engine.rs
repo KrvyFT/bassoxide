@@ -164,7 +164,7 @@ impl LayoutEngine {
         let mut staff_y = 0.0;
         for (track_idx, track) in song.tracks.iter().enumerate() {
             let string_count = track.string_count();
-            
+
             // 1. 五线谱 (Standard)
             let standard_height = 40.0; // 五线谱高度
             staves.push(StaffLayout {
