@@ -54,12 +54,12 @@ impl Synth {
         Ok(())
     }
 
-    /// 获取当前加载的 SoundFont 中的所有预设 (patch, name)
-    pub fn get_presets(&self) -> Vec<(i32, String)> {
+    /// 获取当前加载的 SoundFont 中的所有预设 (bank, patch, name)
+    pub fn get_presets(&self) -> Vec<(i32, i32, String)> {
         if let Ok(sf) = self.soundfont.read() {
             sf.get_presets()
                 .iter()
-                .map(|p| (p.get_patch_number(), p.get_name().to_string()))
+                .map(|p| (p.get_bank_number(), p.get_patch_number(), p.get_name().to_string()))
                 .collect()
         } else {
             vec![]

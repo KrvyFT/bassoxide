@@ -86,6 +86,8 @@ pub struct Track {
     pub midi_port: u8,
     /// MIDI 音色编号 (General MIDI program, 0-127)
     pub midi_program: u8,
+    /// MIDI 音色库编号 (Bank, 通常 0 为默认, 128 为打击乐)
+    pub midi_bank: u8,
     /// 变调夹位置 (0 = 无变调夹)
     pub capo: u8,
     /// 品格数
@@ -118,6 +120,7 @@ impl Default for Track {
             midi_channel: 0,
             midi_port: 0,
             midi_program: 25, // Steel Guitar (GM)
+            midi_bank: 0,
             capo: 0,
             fret_count: 24,
             clef: Clef::Treble,

@@ -378,6 +378,7 @@ fn read_tracks(r: &mut GpReader, count: usize) -> Result<Vec<Track>> {
             midi_channel,
             midi_port,
             midi_program: 25,
+            midi_bank: 0,
             capo,
             fret_count,
             clef: if is_percussion { Clef::Tab } else { Clef::Treble },

@@ -17,6 +17,7 @@ pub enum MidiEvent {
     NoteOn { tick: u32, channel: i32, key: i32, velocity: i32 },
     NoteOff { tick: u32, channel: i32, key: i32 },
     ProgramChange { tick: u32, channel: i32, program: i32 },
+    BankSelect { tick: u32, channel: i32, bank: i32 },
 }
 
 impl MidiEvent {
@@ -25,6 +26,7 @@ impl MidiEvent {
             MidiEvent::NoteOn { tick, .. } => *tick,
             MidiEvent::NoteOff { tick, .. } => *tick,
             MidiEvent::ProgramChange { tick, .. } => *tick,
+            MidiEvent::BankSelect { tick, .. } => *tick,
         }
     }
 }
@@ -98,7 +100,7 @@ impl AudioEngine {
         self.synth.load_soundfont(path)
     }
 
-    pub fn get_presets(&self) -> Vec<(i32, String)> {
+    pub fn get_presets(&self) -> Vec<(i32, i32, String)> {
         self.synth.get_presets()
     }
 
@@ -152,7 +154,12 @@ impl AudioEngine {
             
             let channel = track.midi_channel as i32;
             
-            // 为该轨道压入初始音色切换事件
+            // 为该轨道压入初始音色切换事件（包含 Bank 和 Program）
+            events.push(MidiEvent::BankSelect {
+                tick: 0,
+                channel,
+                bank: track.midi_bank as i32,
+            });
             events.push(MidiEvent::ProgramChange {
                 tick: 0,
                 channel,
@@ -236,6 +243,11 @@ impl AudioEngine {
                         }
                         MidiEvent::NoteOff { channel, key, .. } => {
                             synth.note_off(*channel, *key);
+                        }
+                        MidiEvent::BankSelect { channel, bank, .. } => {
+                            if let Ok(mut s) = synth.synth.lock() {
+                                s.process_midi_message(*channel, 0xB0, 0x00, *bank);
+                            }
                         }
                         MidiEvent::ProgramChange { channel, program, .. } => {
                             synth.program_change(*channel, *program);

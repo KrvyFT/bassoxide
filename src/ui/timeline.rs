@@ -72,19 +72,23 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
                     }
                     
                     // 音色选择
+                    let current_bank = track.midi_bank as i32;
                     let current_program = track.midi_program as i32;
                     let selected_name = presets
                         .iter()
-                        .find(|p| p.0 == current_program)
-                        .map(|p| p.1.as_str())
+                        .find(|p| p.0 == current_bank && p.1 == current_program)
+                        .map(|p| p.2.as_str())
                         .unwrap_or("Unknown");
                         
                     egui::ComboBox::from_id_salt(format!("prog_track_{}", i))
                         .selected_text(selected_name)
                         .width(180.0)
                         .show_ui(ui, |ui| {
-                            for (patch, name) in &presets {
-                                if ui.selectable_value(&mut track.midi_program, *patch as u8, name).changed() {
+                            for (bank, patch, name) in &presets {
+                                let is_selected = *bank == current_bank && *patch == current_program;
+                                if ui.selectable_label(is_selected, name).clicked() {
+                                    track.midi_bank = *bank as u8;
+                                    track.midi_program = *patch as u8;
                                     needs_reload = true;
                                 }
                             }
