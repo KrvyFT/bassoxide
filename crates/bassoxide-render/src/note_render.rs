@@ -100,15 +100,15 @@ pub fn draw_standard_note(
     let offset = pitch_to_staff_offset(display_note);
     
     // 3. 映射到屏幕坐标
-    // 假设 tab_string_spacing * 0.8 是五线谱间距
-    let line_spacing = 15.0 * 0.8; // 这里硬编码 15.0 为默认间距
+    // 五线谱间距 (standard_height = 24.0, 4个间隙，每个 6.0)
+    let line_spacing = 6.0;
     
     // 最底线 (第 1 线) 位于 s = 4
     let bottom_line_y = staff_y + 4.0 * line_spacing;
     let note_y = bottom_line_y - offset * line_spacing;
     
     // 4. 画符头 (椭圆)
-    let radius = egui::Vec2::new(line_spacing * 0.4, line_spacing * 0.3);
+    let radius = egui::Vec2::new(line_spacing * 0.7, line_spacing * 0.5);
     painter.add(egui::Shape::ellipse_filled(Pos2::new(x, note_y), radius, theme.note_text));
     
     // 5. 附加线 (Ledger lines)

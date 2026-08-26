@@ -86,6 +86,9 @@ impl AudioEngine {
             play_state,
         })
     }
+    pub fn load_soundfont(&self, path: &str) -> Result<()> {
+        self.synth.load_soundfont(path)
+    }
 
     fn start_stream(
         device: &cpal::Device,

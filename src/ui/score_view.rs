@@ -7,6 +7,20 @@ use crate::state::AppState;
 
 /// 绘制乐谱主视图
 pub fn score_view(ui: &mut Ui, state: &mut AppState) {
+    let mut current_zoom = state.zoom_factor;
+    if ui.rect_contains_pointer(ui.max_rect()) {
+        let zoom_delta = ui.ctx().input(|i| i.zoom_delta());
+        if zoom_delta != 1.0 {
+            current_zoom *= zoom_delta;
+            current_zoom = current_zoom.clamp(0.3, 5.0);
+        }
+    }
+    if (current_zoom - state.zoom_factor).abs() > 0.001 {
+        state.zoom_factor = current_zoom;
+        state.update_zoom();
+        state.needs_relayout = true;
+    }
+
     let (song, layout) = match (&state.song, &state.layout) {
         (Some(s), Some(l)) => (s, l),
         _ => {
@@ -19,14 +33,15 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
         }
     };
 
-    ScrollArea::vertical()
+    ScrollArea::both()
         .auto_shrink([false, false])
+        .drag_to_scroll(true)
         .show(ui, |ui| {
-            let available_width = ui.available_width();
+            let content_width = layout.total_width + 100.0;
             let content_height = layout.total_height + 100.0;
 
             let (response, painter) = ui.allocate_painter(
-                egui::Vec2::new(available_width, content_height),
+                egui::Vec2::new(content_width, content_height),
                 Sense::click_and_drag(),
             );
 

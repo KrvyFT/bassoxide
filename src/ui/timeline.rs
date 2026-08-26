@@ -5,6 +5,35 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
     ui.heading("混音台与时间轴 (Mixer & Timeline)");
     ui.separator();
     
+    // SF2 选择
+    ui.horizontal(|ui| {
+        ui.label("音源 (SoundFont): ");
+        let sf2_options = ["Orchestra_HQ.sf2"]; // 为了简单目前只放一个，或者扫描目录
+        
+        let mut changed = false;
+        egui::ComboBox::from_id_salt("sf2_combo")
+            .selected_text(&state.current_sf2)
+            .show_ui(ui, |ui| {
+                for option in sf2_options {
+                    if ui.selectable_value(&mut state.current_sf2, option.to_string(), option).changed() {
+                        changed = true;
+                    }
+                }
+            });
+            
+        if changed {
+            if let Some(audio) = &state.audio_engine {
+                let path = format!("assets/{}", state.current_sf2);
+                if let Err(e) = audio.load_soundfont(&path) {
+                    state.status_message = format!("加载音源失败: {e}");
+                } else {
+                    state.status_message = format!("成功加载音源: {}", state.current_sf2);
+                }
+            }
+        }
+    });
+    ui.separator();
+    
     // 我们必须检查 audio_engine 并在修改后通知它重新加载
     let mut needs_reload = false;
     

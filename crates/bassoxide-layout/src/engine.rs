@@ -63,10 +63,17 @@ impl LayoutEngine {
         // 4. 计算 beat 位置
         let beat_positions = self.compute_beat_positions(song, &systems);
 
+        let mut max_width = self.settings.available_width;
+        if let Some(sys) = systems.first() {
+            if let Some(last) = sys.measure_positions.last() {
+                max_width = last.x + last.width + self.settings.margin_left;
+            }
+        }
+
         LayoutResult {
             systems,
             total_height: y,
-            total_width: self.settings.available_width,
+            total_width: max_width,
             beat_positions,
         }
     }
@@ -102,27 +109,12 @@ impl LayoutEngine {
         widths
     }
 
-    /// 将小节分配到行（自动换行算法）
+    /// 将小节分配到行（改为单行无尽横向滚动）
     fn break_into_systems(&self, widths: &[f32]) -> Vec<(usize, usize)> {
-        let max_width = self.settings.available_width - self.settings.margin_left;
-        let mut ranges = Vec::new();
-        let mut start = 0;
-        let mut current_width = self.settings.clef_width + self.settings.time_sig_width;
-
-        for (i, &w) in widths.iter().enumerate() {
-            if current_width + w > max_width && i > start {
-                ranges.push((start, i));
-                start = i;
-                current_width = self.settings.clef_width + self.settings.time_sig_width;
-            }
-            current_width += w;
+        if widths.is_empty() {
+            return vec![];
         }
-
-        if start < widths.len() {
-            ranges.push((start, widths.len()));
-        }
-
-        ranges
+        vec![(0, widths.len())]
     }
 
     /// 布局单个 System
@@ -136,15 +128,9 @@ impl LayoutEngine {
     ) -> SystemLayout {
         let s = &self.settings;
 
-        // 计算总宽度并按比例拉伸小节以填满行宽
+        // 横向滚动模式下，不再按可用屏幕宽度拉伸小节，保持自然宽度 (scale = 1.0)
         let preamble_width = s.clef_width + s.time_sig_width;
-        let raw_width: f32 = measure_widths[start..end].iter().sum();
-        let target_width = s.available_width - s.margin_left - preamble_width;
-        let scale = if raw_width > 0.0 {
-            target_width / raw_width
-        } else {
-            1.0
-        };
+        let scale = 1.0;
 
         // 小节位置
         let mut measure_positions = Vec::new();
@@ -166,15 +152,15 @@ impl LayoutEngine {
             let string_count = track.string_count();
 
             // 1. 五线谱 (Standard)
-            let standard_height = 40.0; // 五线谱高度
+            let standard_height = 24.0; // 五线谱高度压缩
             staves.push(StaffLayout {
                 staff_type: StaffType::Standard,
                 track_index: track_idx,
-                string_count: 5, // 五线谱固定 5 根线
+                string_count: 5,
                 y: staff_y,
                 height: standard_height,
             });
-            staff_y += standard_height + 15.0; // 五线谱和六线谱之间的间距
+            staff_y += standard_height + 10.0; // 缩小五线谱和六线谱之间的间距
 
             // 2. 六线谱/指法谱 (Tablature)
             let tab_height = s.tab_staff_height(string_count);

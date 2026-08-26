@@ -36,6 +36,10 @@ pub struct AppState {
     pub status_message: String,
     /// 音频引擎
     pub audio_engine: Option<bassoxide_audio::AudioEngine>,
+    /// 视图缩放系数
+    pub zoom_factor: f32,
+    /// 当前 SoundFont
+    pub current_sf2: String,
 }
 
 impl Default for AppState {
@@ -59,11 +63,28 @@ impl Default for AppState {
             file_path: None,
             status_message: "就绪".to_string(),
             audio_engine,
+            zoom_factor: 1.0,
+            current_sf2: "Orchestra_HQ.sf2".to_string(),
         }
     }
 }
 
 impl AppState {
+    pub fn update_zoom(&mut self) {
+        // 重置为基础值并乘以上缩放系数
+        let base = bassoxide_layout::spacing::LayoutSettings::default();
+        let z = self.zoom_factor;
+        self.layout_settings.margin_top = base.margin_top * z;
+        self.layout_settings.margin_left = base.margin_left * z;
+        self.layout_settings.system_gap = base.system_gap * z;
+        self.layout_settings.track_gap = base.track_gap * z;
+        self.layout_settings.min_measure_width = base.min_measure_width * z;
+        self.layout_settings.min_beat_spacing = base.min_beat_spacing * z;
+        self.layout_settings.tab_string_spacing = base.tab_string_spacing * z;
+        self.layout_settings.tab_font_size = base.tab_font_size * z;
+        self.layout_settings.clef_width = base.clef_width * z;
+        self.layout_settings.time_sig_width = base.time_sig_width * z;
+    }
     /// 加载乐谱并触发排版
     pub fn load_song(&mut self, song: Song, path: Option<String>) {
         let track_count = song.track_count();
