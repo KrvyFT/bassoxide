@@ -133,10 +133,17 @@ impl eframe::App for BassoxideApp {
                     );
                 });
             });
+            
+        // 混音器/时间轴 (放在状态栏之上)
+        egui::TopBottomPanel::bottom("timeline")
+            .resizable(true)
+            .show(ctx, |ui| {
+                crate::ui::timeline::timeline_panel(ui, &mut self.state);
+            });
 
         // 主内容区
         egui::CentralPanel::default().show(ctx, |ui| {
-            score_view::score_view(ui, &mut self.state);
+            crate::ui::score_view::score_view(ui, &mut self.state);
         });
     }
 }

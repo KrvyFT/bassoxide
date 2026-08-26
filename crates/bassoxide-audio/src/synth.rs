@@ -13,8 +13,8 @@ pub struct Synth {
 
 impl Synth {
     pub fn new(sample_rate: i32) -> Result<Self> {
-        // 尝试加载 assets/TimGM6mb.sf2
-        let sf2_path = "assets/TimGM6mb.sf2";
+        // 尝试加载 assets/Orchestra_HQ.sf2
+        let sf2_path = "assets/Orchestra_HQ.sf2";
         
         let mut sf2_file = File::open(sf2_path)
             .map_err(|e| AudioError::SoundFontError(format!("Failed to open {sf2_path}: {e}")))?;

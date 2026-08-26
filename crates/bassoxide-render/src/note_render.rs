@@ -129,6 +129,20 @@ pub fn draw_standard_note(
             }
         }
     }
+    
+    // 6. 画符干 (Stem)
+    // 根据在五线谱上的相对位置：通常第三线 (offset = 2.0) 以下符干朝上(画在右侧)，第三线及以上符干朝下(画在左侧)
+    let is_stem_up = offset < 2.0;
+    let stem_x = if is_stem_up { x + radius.x } else { x - radius.x };
+    let stem_dir = if is_stem_up { -1.0 } else { 1.0 };
+    // 符干长度大约跨越 3.5 个线间距
+    let stem_length = 3.5 * line_spacing;
+    let stem_y_end = note_y + stem_dir * stem_length;
+    
+    painter.line_segment(
+        [Pos2::new(stem_x, note_y), Pos2::new(stem_x, stem_y_end)],
+        egui::Stroke::new(1.2_f32, theme.note_text),
+    );
 }
 
 

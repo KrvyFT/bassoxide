@@ -78,8 +78,8 @@ pub fn parse_gp7(data: &[u8]) -> Result<Song> {
 }
 
 fn parse_score_gpif(xml: &str) -> Result<Song> {
-    let doc = Document::parse(xml)
-        .map_err(|e| IoError::ParseError(format!("XML Parse Error: {}", e)))?;
+    let doc =
+        Document::parse(xml).map_err(|e| IoError::ParseError(format!("XML Parse Error: {}", e)))?;
 
     let mut master_bars_map = HashMap::new();
     let mut bars_map = HashMap::new();
@@ -92,7 +92,7 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
     for node in doc.descendants() {
         if node.is_element() {
             let id = node.attribute("id").unwrap_or("").to_string();
-            
+
             match node.tag_name().name() {
                 "MasterBar" => {
                     let mut mb = Gp7MasterBar::default();
@@ -117,13 +117,18 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                             }
                         }
                     }
-                    if id.is_empty() { continue; }
+                    if id.is_empty() {
+                        continue;
+                    }
                     master_bars_map.insert(id, mb);
                 }
                 "Bar" => {
-                    if id.is_empty() { continue; }
+                    if id.is_empty() {
+                        continue;
+                    }
                     let mut bar = Gp7Bar::default();
-                    if let Some(voices_node) = node.descendants().find(|n| n.has_tag_name("Voices")) {
+                    if let Some(voices_node) = node.descendants().find(|n| n.has_tag_name("Voices"))
+                    {
                         if let Some(text) = voices_node.text() {
                             bar.voices = text.split_whitespace().map(|s| s.to_string()).collect();
                         }
@@ -131,7 +136,9 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                     bars_map.insert(id, bar);
                 }
                 "Voice" => {
-                    if id.is_empty() { continue; }
+                    if id.is_empty() {
+                        continue;
+                    }
                     let mut voice = Gp7Voice::default();
                     if let Some(beats_node) = node.descendants().find(|n| n.has_tag_name("Beats")) {
                         if let Some(text) = beats_node.text() {
@@ -141,25 +148,32 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                     voices_map.insert(id, voice);
                 }
                 "Beat" => {
-                    if id.is_empty() { continue; }
+                    if id.is_empty() {
+                        continue;
+                    }
                     let mut beat = Gp7Beat::default();
                     if let Some(notes_node) = node.descendants().find(|n| n.has_tag_name("Notes")) {
                         if let Some(text) = notes_node.text() {
                             beat.notes = text.split_whitespace().map(|s| s.to_string()).collect();
                         }
                     }
-                    if let Some(rhythm_node) = node.descendants().find(|n| n.has_tag_name("Rhythm")) {
+                    if let Some(rhythm_node) = node.descendants().find(|n| n.has_tag_name("Rhythm"))
+                    {
                         beat.rhythm_ref = rhythm_node.attribute("ref").unwrap_or("").to_string();
                     }
                     beats_map.insert(id, beat);
                 }
                 "Note" => {
-                    if id.is_empty() { continue; }
+                    if id.is_empty() {
+                        continue;
+                    }
                     let mut note = Gp7Note::default();
                     if let Some(props) = node.descendants().find(|n| n.has_tag_name("Properties")) {
                         for p in props.children().filter(|n| n.is_element()) {
                             match p.tag_name().name() {
-                                "String" => note.string = p.text().unwrap_or("0").parse().unwrap_or(0),
+                                "String" => {
+                                    note.string = p.text().unwrap_or("0").parse().unwrap_or(0)
+                                }
                                 "Fret" => note.fret = p.text().unwrap_or("0").parse().unwrap_or(0),
                                 "Tie" => note.is_tie = true,
                                 "Muted" => note.is_dead = true, // maybe different in gp7
@@ -170,7 +184,9 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                     notes_map.insert(id, note);
                 }
                 "Rhythm" => {
-                    if id.is_empty() { continue; }
+                    if id.is_empty() {
+                        continue;
+                    }
                     let mut rhythm = Gp7Rhythm::default();
                     if let Some(p) = node.descendants().find(|n| n.has_tag_name("Primary")) {
                         rhythm.primary = p.text().unwrap_or("4").parse().unwrap_or(4);
@@ -203,7 +219,7 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
             .unwrap_or("")
             .to_string();
     }
-    
+
     // 获取轨道 ID 顺序
     let mut track_ids = Vec::new();
     if let Some(mt_node) = doc.descendants().find(|n| n.has_tag_name("MasterTrack")) {
@@ -213,10 +229,10 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
             }
         }
     }
-    
+
     // 提前创建 Track 对象并存储到 HashMap 或数组，保证顺序
     let mut track_objects: Vec<Track> = Vec::new();
-    
+
     // 首先从 XML 的 <Tracks> 中解析各个轨道的属性
     let mut tracks_attr_map = HashMap::new();
     if let Some(tracks_node) = doc.descendants().find(|n| n.has_tag_name("Tracks")) {
@@ -236,10 +252,14 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                 .and_then(|n| n.text())
                 .unwrap_or("Track")
                 .to_string();
-            
+
             if let Some(tuning_node) = track_node.descendants().find(|n| n.has_tag_name("Tuning")) {
                 let mut pitches = Vec::new();
-                if let Some(text) = tuning_node.descendants().find(|n| n.has_tag_name("Pitches")).and_then(|n| n.text()) {
+                if let Some(text) = tuning_node
+                    .descendants()
+                    .find(|n| n.has_tag_name("Pitches"))
+                    .and_then(|n| n.text())
+                {
                     for p in text.split_whitespace() {
                         if let Ok(midi) = p.parse::<u8>() {
                             pitches.push(midi);
@@ -249,10 +269,14 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                 if !pitches.is_empty() {
                     track.tuning = Tuning {
                         name: "Custom".to_string(),
-                        strings: pitches.into_iter().enumerate().map(|(i, tuning)| bassoxide_core::track::GuitarString {
-                            number: (i + 1) as u8,
-                            tuning,
-                        }).collect(),
+                        strings: pitches
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, tuning)| bassoxide_core::track::GuitarString {
+                                number: (i + 1) as u8,
+                                tuning,
+                            })
+                            .collect(),
                     };
                 }
             }
@@ -262,7 +286,10 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
 
     // 3. 提取 MasterBars 并组装每个 Track 的 Measure
     if let Some(master_bars_node) = doc.descendants().find(|n| n.has_tag_name("MasterBars")) {
-        for mb_node in master_bars_node.children().filter(|n| n.has_tag_name("MasterBar")) {
+        for mb_node in master_bars_node
+            .children()
+            .filter(|n| n.has_tag_name("MasterBar"))
+        {
             // MasterBar 本身的属性 (拍号等)
             let mut mb = MasterBar::default();
             if let Some(id) = mb_node.attribute("id") {
@@ -272,7 +299,7 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                 }
             }
             song.master_bars.push(mb);
-            
+
             // 该 MasterBar 对应的各轨道 Bar ID 列表
             let mut bar_ids = Vec::new();
             if let Some(bars_node) = mb_node.descendants().find(|n| n.has_tag_name("Bars")) {
@@ -280,22 +307,28 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                     bar_ids = text.split_whitespace().map(|s| s.to_string()).collect();
                 }
             }
-            
+
             // 为每个轨道添加当前小节 (Measure)
             for (track_idx, bar_id) in bar_ids.into_iter().enumerate() {
                 if track_idx >= track_objects.len() {
                     break;
                 }
-                
+
                 let mut measure = Measure::default();
                 if let Some(gp7_bar) = bars_map.get(&bar_id) {
-                    for (v_idx, voice_id) in gp7_bar.voices.iter().enumerate().take(bassoxide_core::measure::MAX_VOICES) {
+                    for (v_idx, voice_id) in gp7_bar
+                        .voices
+                        .iter()
+                        .enumerate()
+                        .take(bassoxide_core::measure::MAX_VOICES)
+                    {
                         let mut voice = Voice::default();
                         if let Some(gp7_voice) = voices_map.get(voice_id) {
                             for beat_id in &gp7_voice.beats {
                                 let mut beat = Beat::default();
                                 if let Some(gp7_beat) = beats_map.get(beat_id) {
-                                    if let Some(gp7_rhythm) = rhythms_map.get(&gp7_beat.rhythm_ref) {
+                                    if let Some(gp7_rhythm) = rhythms_map.get(&gp7_beat.rhythm_ref)
+                                    {
                                         let val = match gp7_rhythm.primary {
                                             1 => NoteValue::Whole,
                                             2 => NoteValue::Half,
@@ -312,7 +345,7 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                                             ..Default::default()
                                         };
                                     }
-                                    
+
                                     for note_id in &gp7_beat.notes {
                                         if let Some(gp7_note) = notes_map.get(note_id) {
                                             let note_type = if gp7_note.is_tie {
@@ -322,7 +355,7 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                                             } else {
                                                 bassoxide_core::note::NoteType::Normal
                                             };
-                                            
+
                                             let mut note = Note {
                                                 string: gp7_note.string.max(1) as u8,
                                                 fret: gp7_note.fret as i8,
@@ -333,8 +366,11 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                                                 right_fingering: None,
                                                 midi_note: 0,
                                             };
-                                            
-                                            note.midi_note = track_objects[track_idx].tuning.midi_note(note.string, note.fret).unwrap_or(0);
+
+                                            note.midi_note = track_objects[track_idx]
+                                                .tuning
+                                                .midi_note(note.string, note.fret)
+                                                .unwrap_or(0);
                                             beat.notes.push(note);
                                         }
                                     }
@@ -349,12 +385,12 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
             }
         }
     }
-    
+
     // 如果没有 MasterBar (容错)
     if song.master_bars.is_empty() {
         song.master_bars.push(MasterBar::default());
     }
-    
+
     song.tracks = track_objects;
 
     Ok(song)

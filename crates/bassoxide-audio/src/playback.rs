@@ -40,6 +40,7 @@ struct PlayState {
     current_tick: u32,
     bpm: u16,
     events: Vec<MidiEvent>,
+    event_idx: usize,
 }
 
 impl AudioEngine {
@@ -70,6 +71,7 @@ impl AudioEngine {
             current_tick: 0,
             bpm: 120,
             events: Vec::new(),
+            event_idx: 0,
         }));
 
         let stream = Self::start_stream(&device, &config, synth.clone())?;
@@ -121,12 +123,18 @@ impl AudioEngine {
         Ok(stream)
     }
     
-    /// 编译 Song 到事件流
     fn compile_song(song: &Song) -> Vec<MidiEvent> {
         let mut events = Vec::new();
-        // 假设 PPQ = 960 (根据 core/types::Duration::ticks 计算)
+        let has_solo = song.tracks.iter().any(|t| t.is_solo);
         
         for track in &song.tracks {
+            if has_solo && !track.is_solo {
+                continue;
+            }
+            if !has_solo && track.is_muted {
+                continue;
+            }
+            
             let channel = track.midi_channel as i32;
             let mut current_tick = 0;
             
@@ -177,9 +185,7 @@ impl AudioEngine {
     /// 启动后台 sequencer 线程
     fn start_sequencer(state: Arc<Mutex<PlayState>>, synth: Arc<Synth>) {
         thread::spawn(move || {
-            let mut last_tick = 0;
             let mut last_time = Instant::now();
-            let mut event_idx = 0;
             
             loop {
                 thread::sleep(Duration::from_millis(10));
@@ -203,21 +209,21 @@ impl AudioEngine {
                 let current = st.current_tick;
                 
                 // 发送落入当前时间窗口的事件
-                while event_idx < st.events.len() && st.events[event_idx].tick <= current {
-                    let ev = &st.events[event_idx];
+                while st.event_idx < st.events.len() && st.events[st.event_idx].tick <= current {
+                    let ev = &st.events[st.event_idx];
                     if ev.is_note_on {
                         synth.note_on(ev.channel, ev.key, ev.velocity);
                     } else {
                         synth.note_off(ev.channel, ev.key);
                     }
-                    event_idx += 1;
+                    st.event_idx += 1;
                 }
                 
                 // 播放结束
-                if event_idx >= st.events.len() {
+                if st.event_idx >= st.events.len() {
                     st.status = PlaybackStatus::Stopped;
                     st.current_tick = 0;
-                    event_idx = 0;
+                    st.event_idx = 0;
                 }
             }
         });
@@ -229,6 +235,7 @@ impl AudioEngine {
             state.events = Self::compile_song(song);
             state.bpm = song.tempo;
             state.current_tick = 0;
+            state.event_idx = 0;
         }
         state.status = PlaybackStatus::Playing;
     }
@@ -236,6 +243,7 @@ impl AudioEngine {
     pub fn pause(&self) {
         let mut state = self.play_state.lock().unwrap();
         state.status = PlaybackStatus::Paused;
+        self.synth.reset();
     }
     
     pub fn stop(&self) {
@@ -243,6 +251,22 @@ impl AudioEngine {
         state.status = PlaybackStatus::Stopped;
         state.current_tick = 0;
         self.synth.reset();
+    }
+    
+    pub fn reload_song(&self, song: &Song) {
+        let mut state = self.play_state.lock().unwrap();
+        let was_playing = state.status == PlaybackStatus::Playing;
+        
+        state.events = Self::compile_song(song);
+        
+        // 当切换独奏静音时，如果当前正在播放，需要让 event_idx 移动到 current_tick 处
+        if was_playing {
+            self.synth.reset();
+            let cur = state.current_tick;
+            state.event_idx = state.events.iter().position(|e| e.tick > cur).unwrap_or(state.events.len());
+        } else {
+            state.event_idx = 0;
+        }
     }
     
     pub fn status(&self) -> PlaybackStatus {
