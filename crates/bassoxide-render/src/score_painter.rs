@@ -29,13 +29,15 @@ impl<'a> ScorePainter<'a> {
         painter: &Painter,
         song: &Song,
         layout: &LayoutResult,
-        _scroll_y: f32,
+        offset: egui::Vec2,
     ) {
+        let margin_left = self.settings.margin_left + offset.x;
+
         for system in &layout.systems {
             // 绘制每个轨道的谱表
             for staff in &system.staves {
                 let track_idx = staff.track_index;
-                let staff_y = system.y + staff.y;
+                let staff_y = system.y + staff.y + offset.y;
 
                 let track = match song.tracks.get(track_idx) {
                     Some(t) => t,
@@ -52,7 +54,7 @@ impl<'a> ScorePainter<'a> {
                     bassoxide_layout::staff::StaffType::Standard => {
                         staff_render::draw_standard_staff(
                             painter,
-                            self.settings.margin_left,
+                            margin_left,
                             staff_y,
                             system_width,
                             self.settings,
@@ -63,7 +65,7 @@ impl<'a> ScorePainter<'a> {
                     bassoxide_layout::staff::StaffType::Tablature => {
                         staff_render::draw_tab_staff(
                             painter,
-                            self.settings.margin_left,
+                            margin_left,
                             staff_y,
                             system_width,
                             staff.string_count,
@@ -72,7 +74,7 @@ impl<'a> ScorePainter<'a> {
                         );
                         staff_render::draw_tab_clef(
                             painter,
-                            self.settings.margin_left,
+                            margin_left,
                             staff_y,
                             staff.string_count,
                             self.settings,
@@ -82,7 +84,7 @@ impl<'a> ScorePainter<'a> {
                     bassoxide_layout::staff::StaffType::Numbered => {
                         staff_render::draw_numbered_staff(
                             painter,
-                            self.settings.margin_left,
+                            margin_left,
                             staff_y,
                             system_width,
                             self.settings,
@@ -124,11 +126,12 @@ impl<'a> ScorePainter<'a> {
                 // 绘制每个小节的内容
                 for measure_pos in &system.measure_positions {
                     let m = measure_pos.measure_index;
+                    let measure_x = measure_pos.x + offset.x;
 
                     // 绘制小节线
                     staff_render::draw_bar_line(
                         painter,
-                        measure_pos.x + measure_pos.width,
+                        measure_x + measure_pos.width,
                         staff_y,
                         staff.height,
                         self.theme,
@@ -144,7 +147,7 @@ impl<'a> ScorePainter<'a> {
                             let voice = measure.primary_voice();
                             for bp in beat_positions {
                                 if let Some(beat) = voice.beats.get(bp.beat_index) {
-                                    let beat_x = measure_pos.x + bp.x;
+                                    let beat_x = measure_x + bp.x;
 
                                     if beat.is_empty() {
                                         // 休止符

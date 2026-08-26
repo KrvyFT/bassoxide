@@ -54,6 +54,6 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
 
             // 绘制乐谱
             let score_painter = ScorePainter::new(&state.layout_settings, &state.theme);
-            score_painter.paint(&painter, song, layout, state.scroll_y);
+            score_painter.paint(&painter, song, layout, response.rect.min.to_vec2());
         });
 }
