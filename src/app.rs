@@ -118,7 +118,7 @@ impl eframe::App for BassoxideApp {
 
         // 播放控制条
         egui::TopBottomPanel::top("transport").show(ctx, |ui| {
-            transport::transport_bar(ui);
+            transport::transport_bar(ui, &mut self.state);
         });
 
         // 底部状态栏

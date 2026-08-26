@@ -2,16 +2,9 @@
 //!
 //! Phase 1 仅提供空壳，Phase 2 将接入 cpal + rustysynth。
 
-pub struct AudioEngine;
+pub mod error;
+pub mod playback;
+pub mod synth;
 
-impl AudioEngine {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Default for AudioEngine {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+pub use playback::{AudioEngine, PlaybackStatus};
+pub use error::{AudioError, Result};

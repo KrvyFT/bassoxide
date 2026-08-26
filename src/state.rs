@@ -34,10 +34,20 @@ pub struct AppState {
     pub file_path: Option<String>,
     /// 状态栏消息
     pub status_message: String,
+    /// 音频引擎
+    pub audio_engine: Option<bassoxide_audio::AudioEngine>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
+        let audio_engine = match bassoxide_audio::AudioEngine::new() {
+            Ok(engine) => Some(engine),
+            Err(e) => {
+                tracing::error!("Failed to initialize audio engine: {}", e);
+                None
+            }
+        };
+
         Self {
             song: None,
             layout: None,
@@ -48,6 +58,7 @@ impl Default for AppState {
             needs_relayout: false,
             file_path: None,
             status_message: "就绪".to_string(),
+            audio_engine,
         }
     }
 }
