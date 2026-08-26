@@ -5,6 +5,8 @@
 pub struct StaffLayout {
     /// 谱表类型
     pub staff_type: StaffType,
+    /// 所属轨道索引
+    pub track_index: usize,
     /// 弦数（仅 Tab 有意义）
     pub string_count: usize,
     /// 谱表顶部 Y 坐标（相对于 System）

@@ -162,18 +162,31 @@ impl LayoutEngine {
         // 各轨道的谱表
         let mut staves = Vec::new();
         let mut staff_y = 0.0;
-        for track in &song.tracks {
+        for (track_idx, track) in song.tracks.iter().enumerate() {
             let string_count = track.string_count();
-            let height = s.tab_staff_height(string_count);
+            
+            // 1. 五线谱 (Standard)
+            let standard_height = 40.0; // 五线谱高度
+            staves.push(StaffLayout {
+                staff_type: StaffType::Standard,
+                track_index: track_idx,
+                string_count: 5, // 五线谱固定 5 根线
+                y: staff_y,
+                height: standard_height,
+            });
+            staff_y += standard_height + 15.0; // 五线谱和六线谱之间的间距
 
+            // 2. 六线谱/指法谱 (Tablature)
+            let tab_height = s.tab_staff_height(string_count);
             staves.push(StaffLayout {
                 staff_type: StaffType::Tablature,
+                track_index: track_idx,
                 string_count,
                 y: staff_y,
-                height,
+                height: tab_height,
             });
 
-            staff_y += height + s.track_gap;
+            staff_y += tab_height + s.track_gap;
         }
 
         let total_height = staff_y - s.track_gap + 10.0; // 减去最后一个 gap

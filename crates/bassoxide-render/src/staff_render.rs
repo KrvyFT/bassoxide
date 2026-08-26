@@ -27,6 +27,28 @@ pub fn draw_tab_staff(
     }
 }
 
+/// 绘制五线谱 (Standard) 的五根水平线
+pub fn draw_standard_staff(
+    painter: &Painter,
+    x: f32,
+    y: f32,
+    width: f32,
+    settings: &LayoutSettings,
+    theme: &Theme,
+) {
+    let stroke = Stroke::new(1.0_f32, theme.staff_line);
+    // 五线谱间距通常比六线谱稍微紧凑一点，这里复用 tab_string_spacing 作为基础单位
+    let line_spacing = settings.tab_string_spacing * 0.8;
+
+    for s in 0..5 {
+        let line_y = y + s as f32 * line_spacing;
+        painter.line_segment(
+            [Pos2::new(x, line_y), Pos2::new(x + width, line_y)],
+            stroke,
+        );
+    }
+}
+
 /// 绘制小节线
 pub fn draw_bar_line(
     painter: &Painter,

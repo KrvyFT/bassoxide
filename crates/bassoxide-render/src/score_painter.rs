@@ -33,7 +33,8 @@ impl<'a> ScorePainter<'a> {
     ) {
         for system in &layout.systems {
             // 绘制每个轨道的谱表
-            for (track_idx, staff) in system.staves.iter().enumerate() {
+            for staff in &system.staves {
+                let track_idx = staff.track_index;
                 let staff_y = system.y + staff.y;
 
                 let track = match song.tracks.get(track_idx) {
@@ -41,32 +42,45 @@ impl<'a> ScorePainter<'a> {
                     None => continue,
                 };
 
-                // 绘制弦线
                 let system_width = system
                     .measure_positions
                     .last()
                     .map(|mp| mp.x + mp.width - self.settings.margin_left)
                     .unwrap_or(self.settings.available_width);
 
-                staff_render::draw_tab_staff(
-                    painter,
-                    self.settings.margin_left,
-                    staff_y,
-                    system_width,
-                    staff.string_count,
-                    self.settings,
-                    self.theme,
-                );
-
-                // 绘制 TAB 谱号（每行开头）
-                staff_render::draw_tab_clef(
-                    painter,
-                    self.settings.margin_left,
-                    staff_y,
-                    staff.string_count,
-                    self.settings,
-                    self.theme,
-                );
+                match staff.staff_type {
+                    bassoxide_layout::staff::StaffType::Standard => {
+                        staff_render::draw_standard_staff(
+                            painter,
+                            self.settings.margin_left,
+                            staff_y,
+                            system_width,
+                            self.settings,
+                            self.theme,
+                        );
+                        // TODO: 绘制高音/低音谱号、调号等
+                    }
+                    bassoxide_layout::staff::StaffType::Tablature => {
+                        staff_render::draw_tab_staff(
+                            painter,
+                            self.settings.margin_left,
+                            staff_y,
+                            system_width,
+                            staff.string_count,
+                            self.settings,
+                            self.theme,
+                        );
+                        staff_render::draw_tab_clef(
+                            painter,
+                            self.settings.margin_left,
+                            staff_y,
+                            staff.string_count,
+                            self.settings,
+                            self.theme,
+                        );
+                    }
+                    _ => {} // 暂不支持简谱等
+                }
 
                 // 绘制拍号（第一行开头或拍号变化时）
                 if let Some(first_mp) = system.measure_positions.first() {
@@ -81,16 +95,19 @@ impl<'a> ScorePainter<'a> {
                             NoteValue::ThirtySecond => 32,
                             NoteValue::SixtyFourth => 64,
                         };
-                        staff_render::draw_time_signature(
-                            painter,
-                            self.settings.margin_left + self.settings.clef_width + 12.0,
-                            staff_y,
-                            ts.numerator,
-                            denom_num,
-                            staff.string_count,
-                            self.settings,
-                            self.theme,
-                        );
+                        
+                        if staff.staff_type == bassoxide_layout::staff::StaffType::Tablature {
+                            staff_render::draw_time_signature(
+                                painter,
+                                self.settings.margin_left + self.settings.clef_width + 12.0,
+                                staff_y,
+                                ts.numerator,
+                                denom_num,
+                                staff.string_count,
+                                self.settings,
+                                self.theme,
+                            );
+                        }
                     }
                 }
 
@@ -121,25 +138,42 @@ impl<'a> ScorePainter<'a> {
 
                                     if beat.is_empty() {
                                         // 休止符
-                                        note_render::draw_rest(
-                                            painter,
-                                            beat_x,
-                                            staff_y,
-                                            staff.height,
-                                            self.theme,
-                                        );
+                                        if staff.staff_type == bassoxide_layout::staff::StaffType::Tablature {
+                                            note_render::draw_rest(
+                                                painter,
+                                                beat_x,
+                                                staff_y,
+                                                staff.height,
+                                                self.theme,
+                                            );
+                                        }
                                     } else {
                                         // 各音符
                                         for note in &beat.notes {
-                                            note_render::draw_tab_note(
-                                                painter,
-                                                note,
-                                                beat_x,
-                                                staff_y,
-                                                self.settings,
-                                                self.theme,
-                                                false,
-                                            );
+                                            match staff.staff_type {
+                                                bassoxide_layout::staff::StaffType::Standard => {
+                                                    note_render::draw_standard_note(
+                                                        painter,
+                                                        note,
+                                                        beat_x,
+                                                        staff_y,
+                                                        &track.tuning,
+                                                        self.theme,
+                                                    );
+                                                }
+                                                bassoxide_layout::staff::StaffType::Tablature => {
+                                                    note_render::draw_tab_note(
+                                                        painter,
+                                                        note,
+                                                        beat_x,
+                                                        staff_y,
+                                                        self.settings,
+                                                        self.theme,
+                                                        false,
+                                                    );
+                                                }
+                                                _ => {}
+                                            }
                                         }
                                     }
                                 }
@@ -147,17 +181,19 @@ impl<'a> ScorePainter<'a> {
                         }
                     }
 
-                    // 排练标记
-                    if let Some(master_bar) = song.master_bar(m) {
-                        if let Some(marker) = &master_bar.marker {
-                            let font = egui::FontId::new(11.0, egui::FontFamily::Proportional);
-                            painter.text(
-                                egui::Pos2::new(measure_pos.x + 4.0, staff_y - 14.0),
-                                egui::Align2::LEFT_BOTTOM,
-                                &marker.name,
-                                font,
-                                self.theme.marker_color,
-                            );
+                    // 排练标记 (仅在每个 System 的最顶端谱表绘制)
+                    if staff.staff_type == bassoxide_layout::staff::StaffType::Standard {
+                        if let Some(master_bar) = song.master_bar(m) {
+                            if let Some(marker) = &master_bar.marker {
+                                let font = egui::FontId::new(11.0, egui::FontFamily::Proportional);
+                                painter.text(
+                                    egui::Pos2::new(measure_pos.x + 4.0, staff_y - 14.0),
+                                    egui::Align2::LEFT_BOTTOM,
+                                    &marker.name,
+                                    font,
+                                    self.theme.marker_color,
+                                );
+                            }
                         }
                     }
                 }
