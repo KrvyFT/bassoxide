@@ -20,29 +20,22 @@ pub fn load_file(data: &[u8]) -> Result<Song> {
         return Err(IoError::UnsupportedFormat("文件过小".to_string()));
     }
 
-    // 1. 尝试 MIDI 签名：MThd (4D 54 68 64)
-    if &data[0..4] == b"MThd" {
-        return midi::parse_midi(data);
-    }
-
-    // 2. 尝试 ZIP 签名：PK\x03\x04 (GP6 或 GP7/8)
-    if &data[0..4] == b"PK\x03\x04" {
-        // 先尝试当 GP7 解析，失败则当 GP6
-        if let Ok(song) = gp7::parse_gp7(data) {
-            return Ok(song);
-        }
-        return gpx::parse_gpx(data);
-    }
-
-    // 3. 尝试旧版 GP 文件 (GP3/4/5)
-    if let Some(version_str) = detect_version(data) {
+    let mut song = if &data[0..4] == b"MThd" {
+        midi::parse_midi(data)
+    } else if &data[0..4] == b"PK\x03\x04" {
+        gp7::parse_gp7(data).or_else(|_| gpx::parse_gpx(data))
+    } else if let Some(version_str) = detect_version(data) {
         if version_str.contains("v5.") {
-            return gp5::parse_gp5(data);
+            gp5::parse_gp5(data)
+        } else {
+            Err(IoError::UnsupportedFormat(version_str))
         }
-        return Err(IoError::UnsupportedFormat(version_str));
-    }
+    } else {
+        Err(IoError::UnsupportedFormat("无法识别的文件格式".to_string()))
+    }?;
 
-    Err(IoError::UnsupportedFormat("无法识别的文件格式".to_string()))
+    song.auto_configure_instruments();
+    Ok(song)
 }
 
 /// 从文件扩展名加载

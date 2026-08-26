@@ -140,4 +140,42 @@ impl Track {
     pub fn string_count(&self) -> usize {
         self.tuning.string_count()
     }
+
+    /// 根据轨道名称自动配置 MIDI 音色与乐器类型
+    pub fn auto_configure_instrument(&mut self) {
+        let name_lower = self.name.to_lowercase();
+        
+        if name_lower.contains("drum") || name_lower.contains("鼓") || name_lower.contains("percussion") {
+            self.is_percussion = true;
+            self.midi_program = 0; 
+            self.instrument_type = InstrumentType::Drums;
+        } else if name_lower.contains("distort") {
+            self.midi_program = 30; // Distortion Guitar
+            self.instrument_type = InstrumentType::ElectricGuitar;
+        } else if name_lower.contains("overdrive") {
+            self.midi_program = 29; // Overdriven Guitar
+            self.instrument_type = InstrumentType::ElectricGuitar;
+        } else if name_lower.contains("clean") {
+            self.midi_program = 27; // Clean Guitar
+            self.instrument_type = InstrumentType::ElectricGuitar;
+        } else if name_lower.contains("jazz guitar") {
+            self.midi_program = 26; // Jazz Guitar
+            self.instrument_type = InstrumentType::ElectricGuitar;
+        } else if name_lower.contains("slap bass") {
+            self.midi_program = 36; // Slap Bass 1
+            self.instrument_type = InstrumentType::Bass;
+        } else if name_lower.contains("synth bass") {
+            self.midi_program = 38; // Synth Bass 1
+            self.instrument_type = InstrumentType::Bass;
+        } else if name_lower.contains("bass") || name_lower.contains("贝斯") || name_lower.contains("低音吉他") {
+            self.midi_program = 33; // Electric Bass (finger)
+            self.instrument_type = InstrumentType::Bass;
+        } else if name_lower.contains("guitar") || name_lower.contains("吉他") {
+            self.midi_program = 27; // Clean Guitar
+            self.instrument_type = InstrumentType::AcousticGuitar;
+        } else if name_lower.contains("piano") || name_lower.contains("钢琴") {
+            self.midi_program = 0; // Acoustic Grand Piano
+            self.instrument_type = InstrumentType::Piano;
+        }
+    }
 }

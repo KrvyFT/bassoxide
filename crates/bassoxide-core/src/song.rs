@@ -116,4 +116,11 @@ impl Song {
     pub fn track(&self, index: usize) -> Option<&Track> {
         self.tracks.get(index)
     }
+
+    /// 根据轨道名称自动配置所有轨道的乐器类型和音色
+    pub fn auto_configure_instruments(&mut self) {
+        for track in &mut self.tracks {
+            track.auto_configure_instrument();
+        }
+    }
 }
