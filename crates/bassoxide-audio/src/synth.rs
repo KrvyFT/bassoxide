@@ -2,13 +2,14 @@
 
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 use std::fs::File;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use tracing::{info, warn};
 
 use crate::error::{AudioError, Result};
 
 pub struct Synth {
     pub synth: Arc<Mutex<Synthesizer>>,
+    pub soundfont: RwLock<Arc<SoundFont>>,
     pub sample_rate: i32,
 }
 
@@ -27,6 +28,7 @@ impl Synth {
             
         Ok(Self {
             synth: Arc::new(Mutex::new(synthesizer)),
+            soundfont: RwLock::new(soundfont),
             sample_rate,
         })
     }
@@ -45,8 +47,23 @@ impl Synth {
         if let Ok(mut s) = self.synth.lock() {
             *s = new_synth;
         }
+        if let Ok(mut sf) = self.soundfont.write() {
+            *sf = soundfont;
+        }
         info!("Successfully loaded new SoundFont: {}", path);
         Ok(())
+    }
+
+    /// 获取当前加载的 SoundFont 中的所有预设 (patch, name)
+    pub fn get_presets(&self) -> Vec<(i32, String)> {
+        if let Ok(sf) = self.soundfont.read() {
+            sf.get_presets()
+                .iter()
+                .map(|p| (p.get_patch_number(), p.get_name().to_string()))
+                .collect()
+        } else {
+            vec![]
+        }
     }
     
     /// 发送 Note On

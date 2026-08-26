@@ -37,6 +37,12 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
     // 我们必须检查 audio_engine 并在修改后通知它重新加载
     let mut needs_reload = false;
     
+    let presets = state
+        .audio_engine
+        .as_ref()
+        .map(|a| a.get_presets())
+        .unwrap_or_default();
+
     egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
         if let Some(song) = &mut state.song {
             for (i, track) in song.tracks.iter_mut().enumerate() {
@@ -65,6 +71,25 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
                         needs_reload = true;
                     }
                     
+                    // 音色选择
+                    let current_program = track.midi_program as i32;
+                    let selected_name = presets
+                        .iter()
+                        .find(|p| p.0 == current_program)
+                        .map(|p| p.1.as_str())
+                        .unwrap_or("Unknown");
+                        
+                    egui::ComboBox::from_id_salt(format!("prog_track_{}", i))
+                        .selected_text(selected_name)
+                        .width(180.0)
+                        .show_ui(ui, |ui| {
+                            for (patch, name) in &presets {
+                                if ui.selectable_value(&mut track.midi_program, *patch as u8, name).changed() {
+                                    needs_reload = true;
+                                }
+                            }
+                        });
+                        
                     // Volume Slider (placeholder)
                     let mut vol = 100;
                     ui.add(egui::Slider::new(&mut vol, 0..=127).text("Vol"));

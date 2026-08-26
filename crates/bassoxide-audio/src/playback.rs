@@ -90,6 +90,10 @@ impl AudioEngine {
         self.synth.load_soundfont(path)
     }
 
+    pub fn get_presets(&self) -> Vec<(i32, String)> {
+        self.synth.get_presets()
+    }
+
     fn start_stream(
         device: &cpal::Device,
         config: &StreamConfig,

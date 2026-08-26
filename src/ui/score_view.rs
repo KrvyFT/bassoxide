@@ -42,7 +42,7 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
 
             let (response, painter) = ui.allocate_painter(
                 egui::Vec2::new(content_width, content_height),
-                Sense::click_and_drag(),
+                Sense::hover(),
             );
 
             // 填充背景
