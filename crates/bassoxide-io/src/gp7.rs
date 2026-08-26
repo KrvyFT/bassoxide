@@ -169,15 +169,23 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                     }
                     let mut note = Gp7Note::default();
                     if let Some(props) = node.descendants().find(|n| n.has_tag_name("Properties")) {
-                        for p in props.children().filter(|n| n.is_element()) {
-                            match p.tag_name().name() {
-                                "String" => {
-                                    note.string = p.text().unwrap_or("0").parse().unwrap_or(0)
+                        for p in props.children().filter(|n| n.has_tag_name("Property")) {
+                            if let Some(prop_name) = p.attribute("name") {
+                                match prop_name {
+                                    "String" => {
+                                        if let Some(inner) = p.descendants().find(|n| n.has_tag_name("String")) {
+                                            note.string = inner.text().unwrap_or("0").parse().unwrap_or(0);
+                                        }
+                                    }
+                                    "Fret" => {
+                                        if let Some(inner) = p.descendants().find(|n| n.has_tag_name("Fret")) {
+                                            note.fret = inner.text().unwrap_or("0").parse().unwrap_or(0);
+                                        }
+                                    }
+                                    "Tie" => note.is_tie = true,
+                                    "Muted" => note.is_dead = true,
+                                    _ => {}
                                 }
-                                "Fret" => note.fret = p.text().unwrap_or("0").parse().unwrap_or(0),
-                                "Tie" => note.is_tie = true,
-                                "Muted" => note.is_dead = true, // maybe different in gp7
-                                _ => {}
                             }
                         }
                     }
