@@ -51,10 +51,16 @@ impl AudioEngine {
         let mut supported_configs_range = device.supported_output_configs()
             .map_err(|e| AudioError::DeviceError(format!("Error while querying configs: {e}")))?;
             
-        let config = supported_configs_range.next()
-            .ok_or_else(|| AudioError::DeviceError("No supported config".to_string()))?
-            .with_max_sample_rate()
-            .config();
+        let config_range = supported_configs_range.next()
+            .ok_or_else(|| AudioError::DeviceError("No supported config".to_string()))?;
+            
+        let target_sr = cpal::SampleRate(44100);
+        let config = if config_range.min_sample_rate() <= target_sr && target_sr <= config_range.max_sample_rate() {
+            config_range.with_sample_rate(target_sr)
+        } else {
+            let max_allowed = config_range.max_sample_rate().0.min(192000);
+            config_range.with_sample_rate(cpal::SampleRate(max_allowed))
+        }.config();
             
         let sample_rate = config.sample_rate.0 as i32;
         let synth = Arc::new(Synth::new(sample_rate)?);

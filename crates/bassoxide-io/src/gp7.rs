@@ -203,45 +203,33 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
             .unwrap_or("")
             .to_string();
     }
-
-    // GP7 将 MasterBars 按顺序放在 <MasterBars> 节点下，提取它们
-    if let Some(master_bars_node) = doc.descendants().find(|n| n.has_tag_name("MasterBars")) {
-        // 如果这里只有一系列 ID (在 <MasterBars> 标签的内容中)
-        let mut mb_ids = Vec::new();
-        if let Some(text) = master_bars_node.text() {
-             mb_ids = text.split_whitespace().map(|s| s.to_string()).collect();
-        }
-        
-        // 如果它包含子节点 <MasterBar> (由于我们第一次扫描已经按 id 解析了，但需要保持顺序)
-        if mb_ids.is_empty() {
-             for mb_node in master_bars_node.children().filter(|n| n.has_tag_name("MasterBar")) {
-                 if let Some(id) = mb_node.attribute("id") {
-                     mb_ids.push(id.to_string());
-                 }
-             }
-        }
-
-        for id in mb_ids {
-            if let Some(gp7_mb) = master_bars_map.get(&id) {
-                let mut mb = MasterBar::default();
-                mb.time_signature = gp7_mb.time_signature;
-                mb.tempo = gp7_mb.tempo;
-                song.master_bars.push(mb);
+    
+    // 获取轨道 ID 顺序
+    let mut track_ids = Vec::new();
+    if let Some(mt_node) = doc.descendants().find(|n| n.has_tag_name("MasterTrack")) {
+        if let Some(tracks_node) = mt_node.descendants().find(|n| n.has_tag_name("Tracks")) {
+            if let Some(text) = tracks_node.text() {
+                track_ids = text.split_whitespace().map(|s| s.to_string()).collect();
             }
         }
     }
     
-    // Fallback
-    if song.master_bars.is_empty() {
-        song.master_bars.push(MasterBar::default());
-    }
-
-    // 3. 提取 Tracks 并还原数据树
+    // 提前创建 Track 对象并存储到 HashMap 或数组，保证顺序
+    let mut track_objects: Vec<Track> = Vec::new();
+    
+    // 首先从 XML 的 <Tracks> 中解析各个轨道的属性
+    let mut tracks_attr_map = HashMap::new();
     if let Some(tracks_node) = doc.descendants().find(|n| n.has_tag_name("Tracks")) {
         for track_node in tracks_node.children().filter(|n| n.has_tag_name("Track")) {
-            let mut track = Track::default();
-            
-            // Track 名称
+            if let Some(id) = track_node.attribute("id") {
+                tracks_attr_map.insert(id.to_string(), track_node);
+            }
+        }
+    }
+
+    for t_id in &track_ids {
+        let mut track = Track::default();
+        if let Some(track_node) = tracks_attr_map.get(t_id) {
             track.name = track_node
                 .descendants()
                 .find(|n| n.has_tag_name("Name"))
@@ -249,7 +237,6 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                 .unwrap_or("Track")
                 .to_string();
             
-            // 解析弦数和定弦
             if let Some(tuning_node) = track_node.descendants().find(|n| n.has_tag_name("Tuning")) {
                 let mut pitches = Vec::new();
                 if let Some(text) = tuning_node.descendants().find(|n| n.has_tag_name("Pitches")).and_then(|n| n.text()) {
@@ -269,29 +256,45 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                     };
                 }
             }
+        }
+        track_objects.push(track);
+    }
+
+    // 3. 提取 MasterBars 并组装每个 Track 的 Measure
+    if let Some(master_bars_node) = doc.descendants().find(|n| n.has_tag_name("MasterBars")) {
+        for mb_node in master_bars_node.children().filter(|n| n.has_tag_name("MasterBar")) {
+            // MasterBar 本身的属性 (拍号等)
+            let mut mb = MasterBar::default();
+            if let Some(id) = mb_node.attribute("id") {
+                if let Some(gp7_mb) = master_bars_map.get(id) {
+                    mb.time_signature = gp7_mb.time_signature;
+                    mb.tempo = gp7_mb.tempo;
+                }
+            }
+            song.master_bars.push(mb);
             
-            // 解析 Bars
+            // 该 MasterBar 对应的各轨道 Bar ID 列表
             let mut bar_ids = Vec::new();
-            if let Some(bars_node) = track_node.descendants().find(|n| n.has_tag_name("Bars")) {
+            if let Some(bars_node) = mb_node.descendants().find(|n| n.has_tag_name("Bars")) {
                 if let Some(text) = bars_node.text() {
                     bar_ids = text.split_whitespace().map(|s| s.to_string()).collect();
                 }
             }
-
-            // 构建 Measure 列表
-            for bar_id in bar_ids {
-                let mut measure = Measure::default();
+            
+            // 为每个轨道添加当前小节 (Measure)
+            for (track_idx, bar_id) in bar_ids.into_iter().enumerate() {
+                if track_idx >= track_objects.len() {
+                    break;
+                }
                 
+                let mut measure = Measure::default();
                 if let Some(gp7_bar) = bars_map.get(&bar_id) {
                     for (v_idx, voice_id) in gp7_bar.voices.iter().enumerate().take(bassoxide_core::measure::MAX_VOICES) {
                         let mut voice = Voice::default();
-                        
                         if let Some(gp7_voice) = voices_map.get(voice_id) {
                             for beat_id in &gp7_voice.beats {
                                 let mut beat = Beat::default();
-                                
                                 if let Some(gp7_beat) = beats_map.get(beat_id) {
-                                    // 处理 Rhythm (时值)
                                     if let Some(gp7_rhythm) = rhythms_map.get(&gp7_beat.rhythm_ref) {
                                         let val = match gp7_rhythm.primary {
                                             1 => NoteValue::Whole,
@@ -310,7 +313,6 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                                         };
                                     }
                                     
-                                    // 处理 Notes
                                     for note_id in &gp7_beat.notes {
                                         if let Some(gp7_note) = notes_map.get(note_id) {
                                             let note_type = if gp7_note.is_tie {
@@ -324,7 +326,7 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                                             let mut note = Note {
                                                 string: gp7_note.string.max(1) as u8,
                                                 fret: gp7_note.fret as i8,
-                                                velocity: 100, // 默认力度
+                                                velocity: 100,
                                                 note_type,
                                                 effects: Vec::new(),
                                                 left_fingering: None,
@@ -332,8 +334,7 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                                                 midi_note: 0,
                                             };
                                             
-                                            // 计算 MIDI note
-                                            note.midi_note = track.tuning.midi_note(note.string, note.fret).unwrap_or(0);
+                                            note.midi_note = track_objects[track_idx].tuning.midi_note(note.string, note.fret).unwrap_or(0);
                                             beat.notes.push(note);
                                         }
                                     }
@@ -344,11 +345,17 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                         measure.voices[v_idx] = voice;
                     }
                 }
-                track.measures.push(measure);
+                track_objects[track_idx].measures.push(measure);
             }
-            song.tracks.push(track);
         }
     }
+    
+    // 如果没有 MasterBar (容错)
+    if song.master_bars.is_empty() {
+        song.master_bars.push(MasterBar::default());
+    }
+    
+    song.tracks = track_objects;
 
     Ok(song)
 }
