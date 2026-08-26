@@ -79,7 +79,17 @@ impl<'a> ScorePainter<'a> {
                             self.theme,
                         );
                     }
-                    _ => {} // 暂不支持简谱等
+                    bassoxide_layout::staff::StaffType::Numbered => {
+                        staff_render::draw_numbered_staff(
+                            painter,
+                            self.settings.margin_left,
+                            staff_y,
+                            system_width,
+                            self.settings,
+                            self.theme,
+                        );
+                    }
+                    _ => {} // 其他谱表
                 }
 
                 // 绘制拍号（第一行开头或拍号变化时）
@@ -168,6 +178,46 @@ impl<'a> ScorePainter<'a> {
                                                         beat_x,
                                                         staff_y,
                                                         self.settings,
+                                                        self.theme,
+                                                        false,
+                                                    );
+                                                    
+                                                    // 绘制特效
+                                                    let string_y = staff_y + bassoxide_layout::tablature::string_y_offset(note.string, self.settings);
+                                                    for effect in &note.effects {
+                                                        match effect {
+                                                            bassoxide_core::effects::NoteEffect::Bend(bend) => {
+                                                                crate::effect_render::draw_bend(painter, bend, beat_x, string_y, self.theme);
+                                                            }
+                                                            bassoxide_core::effects::NoteEffect::Harmonic(harm) => {
+                                                                crate::effect_render::draw_harmonic(painter, harm, beat_x, string_y, self.theme);
+                                                            }
+                                                            bassoxide_core::effects::NoteEffect::Vibrato(_, _) => {
+                                                                crate::effect_render::draw_vibrato(painter, beat_x, staff_y - 10.0, 20.0, self.theme);
+                                                            }
+                                                            bassoxide_core::effects::NoteEffect::Slide(s) => {
+                                                                // 简单向右画一条滑音线
+                                                                if !s.is_empty() {
+                                                                    crate::effect_render::draw_slide(painter, &s[0], beat_x, string_y, beat_x + 30.0, string_y, self.theme);
+                                                                }
+                                                            }
+                                                            bassoxide_core::effects::NoteEffect::LetRing => {
+                                                                crate::effect_render::draw_text_line(painter, "Let Ring", beat_x, staff_y + staff.height + 10.0, 30.0, self.theme);
+                                                            }
+                                                            bassoxide_core::effects::NoteEffect::PalmMute => {
+                                                                crate::effect_render::draw_text_line(painter, "P.M.", beat_x, staff_y + staff.height + 10.0, 30.0, self.theme);
+                                                            }
+                                                            _ => {}
+                                                        }
+                                                    }
+                                                }
+                                                bassoxide_layout::staff::StaffType::Numbered => {
+                                                    note_render::draw_numbered_note(
+                                                        painter,
+                                                        note,
+                                                        beat_x,
+                                                        staff_y,
+                                                        &track.tuning,
                                                         self.theme,
                                                         false,
                                                     );

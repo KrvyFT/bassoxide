@@ -8,6 +8,7 @@ pub mod note_render;
 pub mod score_painter;
 pub mod selection;
 pub mod staff_render;
+pub mod effect_render;
 
 pub use colors::Theme;
 pub use score_painter::ScorePainter;

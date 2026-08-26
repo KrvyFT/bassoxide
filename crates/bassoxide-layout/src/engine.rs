@@ -151,28 +151,41 @@ impl LayoutEngine {
         for (track_idx, track) in song.tracks.iter().enumerate() {
             let string_count = track.string_count();
 
-            // 1. 五线谱 (Standard)
-            let standard_height = 24.0; // 五线谱高度压缩
-            staves.push(StaffLayout {
-                staff_type: StaffType::Standard,
-                track_index: track_idx,
-                string_count: 5,
-                y: staff_y,
-                height: standard_height,
-            });
-            staff_y += standard_height + 10.0; // 缩小五线谱和六线谱之间的间距
+            let is_guitar_bass = track.midi_program >= 24 && track.midi_program <= 39 && string_count > 0;
 
-            // 2. 六线谱/指法谱 (Tablature)
-            let tab_height = s.tab_staff_height(string_count);
-            staves.push(StaffLayout {
-                staff_type: StaffType::Tablature,
-                track_index: track_idx,
-                string_count,
-                y: staff_y,
-                height: tab_height,
-            });
-
-            staff_y += tab_height + s.track_gap;
+            if !is_guitar_bass {
+                // 其他乐器：只显示五线谱 (Standard)
+                let standard_height = 24.0;
+                staves.push(StaffLayout {
+                    staff_type: StaffType::Standard,
+                    track_index: track_idx,
+                    string_count: 5,
+                    y: staff_y,
+                    height: standard_height,
+                });
+                staff_y += standard_height + s.track_gap;
+            } else {
+                // 吉他/贝斯：显示指法谱(Tablature) + 数字谱(Numbered)
+                let tab_height = s.tab_staff_height(string_count);
+                staves.push(StaffLayout {
+                    staff_type: StaffType::Tablature,
+                    track_index: track_idx,
+                    string_count,
+                    y: staff_y,
+                    height: tab_height,
+                });
+                staff_y += tab_height + 10.0;
+                
+                let numbered_height = 20.0;
+                staves.push(StaffLayout {
+                    staff_type: StaffType::Numbered,
+                    track_index: track_idx,
+                    string_count: 1, 
+                    y: staff_y,
+                    height: numbered_height,
+                });
+                staff_y += numbered_height + s.track_gap;
+            }
         }
 
         let total_height = staff_y - s.track_gap + 10.0; // 减去最后一个 gap

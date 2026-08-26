@@ -49,6 +49,27 @@ pub fn draw_standard_staff(
     }
 }
 
+/// 绘制数字谱/简谱 (Numbered Notation) 的基线
+pub fn draw_numbered_staff(
+    painter: &Painter,
+    x: f32,
+    y: f32,
+    width: f32,
+    _settings: &LayoutSettings,
+    theme: &Theme,
+) {
+    // 简谱无需完整的谱线，为了对齐视觉，画一条很淡的虚线或实线作为基准
+    // y 为谱表的起始位置，简谱高 20.0，我们在 y+10 处画中心线
+    let mut color = theme.staff_line;
+    color[3] = (color[3] as f32 * 0.3) as u8; // 30% 透明度
+    let stroke = Stroke::new(1.0_f32, color);
+    
+    painter.line_segment(
+        [Pos2::new(x, y + 10.0), Pos2::new(x + width, y + 10.0)],
+        stroke,
+    );
+}
+
 /// 绘制小节线
 pub fn draw_bar_line(
     painter: &Painter,
