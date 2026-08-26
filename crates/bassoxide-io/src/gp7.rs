@@ -40,7 +40,14 @@ struct Gp7Note {
     string: usize,
     fret: usize,
     is_tie: bool,
-    is_dead: bool,
+    pub is_dead: bool,
+    pub has_vibrato: bool,
+    pub has_bend: bool,
+    pub has_slide: bool,
+    pub has_harmonic: bool,
+    pub has_palm_mute: bool,
+    pub has_let_ring: bool,
+    pub hammer_pull: bool, // 泛指击勾弦
 }
 
 #[derive(Debug, Default)]
@@ -184,6 +191,13 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                                     }
                                     "Tie" => note.is_tie = true,
                                     "Muted" => note.is_dead = true,
+                                    "Vibrato" => note.has_vibrato = true,
+                                    "Bend" => note.has_bend = true,
+                                    "Slide" => note.has_slide = true,
+                                    "HarmonicType" | "HarmonicFret" => note.has_harmonic = true,
+                                    "PalmMute" => note.has_palm_mute = true,
+                                    "LetRing" => note.has_let_ring = true,
+                                    "Hammer" | "PullOff" | "Legato" => note.hammer_pull = true,
                                     _ => {}
                                 }
                             }
@@ -367,13 +381,46 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                                             let mut note = Note {
                                                 string: gp7_note.string.max(1) as u8,
                                                 fret: gp7_note.fret as i8,
-                                                velocity: 100,
+                                                velocity: 95,
                                                 note_type,
                                                 effects: Vec::new(),
                                                 left_fingering: None,
                                                 right_fingering: None,
                                                 midi_note: 0,
                                             };
+
+                                            use bassoxide_core::effects::*;
+                                            if gp7_note.has_vibrato {
+                                                note.effects.push(NoteEffect::Vibrato(VibratoType::Finger, VibratoSpeed::Medium));
+                                            }
+                                            if gp7_note.has_bend {
+                                                note.effects.push(NoteEffect::Bend(BendEffect {
+                                                    bend_type: BendType::Bend,
+                                                    points: vec![
+                                                        BendPoint { position: 0, value: 0, vibrato: false },
+                                                        BendPoint { position: 6, value: 4, vibrato: false }, // 默认推全音 (4 * 25 cents)
+                                                        BendPoint { position: 12, value: 4, vibrato: false },
+                                                    ],
+                                                }));
+                                            }
+                                            if gp7_note.has_slide {
+                                                note.effects.push(NoteEffect::Slide(vec![SlideType::LegatoSlide]));
+                                            }
+                                            if gp7_note.has_harmonic {
+                                                note.effects.push(NoteEffect::Harmonic(HarmonicEffect {
+                                                    harmonic_type: HarmonicType::Natural,
+                                                    fret_offset: None,
+                                                }));
+                                            }
+                                            if gp7_note.has_palm_mute {
+                                                note.effects.push(NoteEffect::PalmMute);
+                                            }
+                                            if gp7_note.has_let_ring {
+                                                note.effects.push(NoteEffect::LetRing);
+                                            }
+                                            if gp7_note.hammer_pull {
+                                                note.effects.push(NoteEffect::HammerOnPullOff(HammerOnPullOff::HammerOn)); // 统配为 HammerOn
+                                            }
 
                                             note.midi_note = track_objects[track_idx]
                                                 .tuning
