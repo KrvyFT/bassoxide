@@ -144,15 +144,16 @@ impl AudioEngine {
         let mut events = Vec::new();
         let has_solo = song.tracks.iter().any(|t| t.is_solo);
         
-        for track in &song.tracks {
+        for (track_idx, track) in song.tracks.iter().enumerate() {
             if has_solo && !track.is_solo {
                 continue;
             }
             if !has_solo && track.is_muted {
                 continue;
             }
-            
-            let channel = track.midi_channel as i32;
+            // 为避免多轨道共用同一 channel 导致音色互相覆盖，
+            // 这里我们为每个 track 分配一个独立的通道 (最多16个)
+            let channel = (track_idx % 16) as i32;
             
             // 为该轨道压入初始音色切换事件（包含 Bank 和 Program）
             events.push(MidiEvent::BankSelect {
@@ -245,11 +246,13 @@ impl AudioEngine {
                             synth.note_off(*channel, *key);
                         }
                         MidiEvent::BankSelect { channel, bank, .. } => {
+                            tracing::info!("Sending BankSelect: channel={}, bank={}", channel, bank);
                             if let Ok(mut s) = synth.synth.lock() {
                                 s.process_midi_message(*channel, 0xB0, 0x00, *bank);
                             }
                         }
                         MidiEvent::ProgramChange { channel, program, .. } => {
+                            tracing::info!("Sending ProgramChange: channel={}, program={}", channel, program);
                             synth.program_change(*channel, *program);
                         }
                     }
@@ -300,6 +303,25 @@ impl AudioEngine {
         if was_playing {
             self.synth.reset();
             let cur = state.current_tick;
+            
+            // 将所有在当前时间点之前的配置事件立即发出，确保重置后的合成器能恢复正确的音色
+            for e in &state.events {
+                if e.tick() > cur {
+                    break;
+                }
+                match e {
+                    MidiEvent::BankSelect { channel, bank, .. } => {
+                        if let Ok(mut s) = self.synth.synth.lock() {
+                            s.process_midi_message(*channel, 0xB0, 0x00, *bank);
+                        }
+                    }
+                    MidiEvent::ProgramChange { channel, program, .. } => {
+                        self.synth.program_change(*channel, *program);
+                    }
+                    _ => {} // NoteOn/NoteOff 不补发
+                }
+            }
+            
             state.event_idx = state.events.iter().position(|e| e.tick() > cur).unwrap_or(state.events.len());
         } else {
             state.event_idx = 0;
