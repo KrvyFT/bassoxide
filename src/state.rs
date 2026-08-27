@@ -1,5 +1,7 @@
 //! 应用状态管理。
 
+use std::path::PathBuf;
+use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
 use bassoxide_core::song::Song;
@@ -10,6 +12,9 @@ use bassoxide_render::Theme;
 
 use crate::ui::audio_track::AudioTrack;
 use crate::ui::material::MaterialPalette;
+
+/// 后台音频解码任务结果
+pub type AudioJobReceiver = Receiver<Result<AudioTrack, String>>;
 
 /// 编辑器光标位置
 #[derive(Debug, Clone)]
@@ -74,10 +79,18 @@ pub struct AppState {
     pub scroll_y: f32,
     /// 是否需要重新排版
     pub needs_relayout: bool,
-    /// 文件路径
+    /// 文件路径（乐谱或工程显示用）
     pub file_path: Option<String>,
+    /// 当前 `.bso` 工程路径（有则 Ctrl+S 直接覆盖保存）
+    pub project_path: Option<PathBuf>,
     /// 状态栏消息
     pub status_message: String,
+    /// 居中遮罩：「处理中…」
+    pub busy_message: Option<String>,
+    /// 后台音频解码接收端
+    pub audio_job_rx: Option<AudioJobReceiver>,
+    /// 音频轨面板请求加载的路径（由 update 转异步任务）
+    pub pending_audio_path: Option<PathBuf>,
     /// PCM 音频播放器（外部音频轨，非 MIDI）
     pub audio_player: Option<bassoxide_audio::AudioPlayer>,
     /// 外部音频同步轨
@@ -92,6 +105,10 @@ pub struct AppState {
     pub settings_open: bool,
     /// 六线谱调弦配置窗口
     pub tuning_editor_open: bool,
+    /// 排练标记编辑窗口
+    pub marker_editor_open: bool,
+    /// 标记编辑缓冲（当前光标小节）
+    pub marker_edit_name: String,
     /// 主题是否已应用到 egui
     pub theme_dirty: bool,
     /// 练习变速（0.5–1.5）
@@ -129,7 +146,11 @@ impl Default for AppState {
             scroll_y: 0.0,
             needs_relayout: false,
             file_path: None,
+            project_path: None,
             status_message: "就绪".to_string(),
+            busy_message: None,
+            audio_job_rx: None,
+            pending_audio_path: None,
             audio_player,
             audio_track: None,
             zoom_factor: 1.0,
@@ -137,6 +158,8 @@ impl Default for AppState {
             is_light_theme,
             settings_open: false,
             tuning_editor_open: false,
+            marker_editor_open: false,
+            marker_edit_name: String::new(),
             theme_dirty: true,
             playback_rate: 1.0,
             loop_a: None,
@@ -260,6 +283,23 @@ impl AppState {
         let track_count = song.track_count();
         let measure_count = song.measure_count();
         self.file_path = path;
+        // 非 .bso 打开时清空工程路径（.bso 由 apply_meta_and_song 单独设置）
+        if self
+            .project_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            != self.file_path
+        {
+            // 仅当 file_path 不是当前 project 时保持；GP 打开会换路径
+            if self
+                .file_path
+                .as_ref()
+                .map(|p| !p.ends_with(".bso"))
+                .unwrap_or(true)
+            {
+                self.project_path = None;
+            }
+        }
         self.selected_track = 0;
         self.status_message = format!(
             "已加载: {} | {} 轨道, {} 小节, {} BPM",
@@ -286,6 +326,84 @@ impl AppState {
         self.cursor = CursorPosition::default();
         self.scroll_y = 0.0;
         self.sync_playback_tools_to_player();
+    }
+
+    /// 安装已解码的音频轨并同步播放器
+    pub fn install_audio_track(&mut self, mut track: AudioTrack) {
+        if let Some(player) = &self.audio_player {
+            player.set_audio(track.samples.clone(), track.sample_rate);
+            player.set_sync_offset(track.sync_offset_secs);
+        }
+        self.status_message = format!(
+            "已加载音频: {} | {:.1}s | 检测 {:.1} BPM | {} 小节线",
+            track.path,
+            track.duration_secs,
+            track.analysis.bpm,
+            track.analysis.measure_times.len()
+        );
+        // 保留视图偏移若刚从工程恢复（调用方先写入字段）
+        let _ = &mut track;
+        self.audio_track = Some(track);
+        self.busy_message = None;
+        self.sync_playback_tools_to_player();
+    }
+
+    /// 当前播放头所在小节索引
+    pub fn playhead_measure_index(&self) -> usize {
+        let secs = self
+            .audio_player
+            .as_ref()
+            .map(|p| p.score_position_secs())
+            .unwrap_or(0.0);
+        let Some(song) = &self.song else {
+            return self.cursor.measure;
+        };
+        let tl = bassoxide_audio::score_timeline(song);
+        let (idx, _) = bassoxide_audio::measure_at_score_secs(&tl, secs);
+        idx
+    }
+
+    /// 跳转到指定排练标记名
+    pub fn jump_to_marker_name(&mut self, name: &str) -> bool {
+        let Some(song) = &self.song else {
+            return false;
+        };
+        let idx = song.master_bars.iter().position(|mb| {
+            mb.marker
+                .as_ref()
+                .map(|m| m.name.eq_ignore_ascii_case(name))
+                .unwrap_or(false)
+        });
+        let Some(idx) = idx else {
+            self.status_message = format!("未找到标记「{name}」");
+            return false;
+        };
+        let tl = bassoxide_audio::score_timeline(song);
+        let secs = tl.measure_times.get(idx).copied().unwrap_or(0.0);
+        self.cursor.measure = idx;
+        self.seek_score_secs(secs, false);
+        self.status_message = format!("跳转到标记「{name}」（小节 {}）", idx + 1);
+        true
+    }
+
+    /// 跳转到首个匹配的段落方向标记所在小节
+    pub fn jump_to_direction(&mut self, dir: bassoxide_core::Direction) -> bool {
+        let Some(song) = &self.song else {
+            return false;
+        };
+        let idx = song
+            .master_bars
+            .iter()
+            .position(|mb| mb.directions.contains(&dir));
+        let Some(idx) = idx else {
+            self.status_message = format!("未找到方向标记 {dir:?}");
+            return false;
+        };
+        let tl = bassoxide_audio::score_timeline(song);
+        let secs = tl.measure_times.get(idx).copied().unwrap_or(0.0);
+        self.cursor.measure = idx;
+        self.seek_score_secs(secs, false);
+        true
     }
 
     /// 把变速 / 循环 / 节拍器调度同步到 AudioPlayer

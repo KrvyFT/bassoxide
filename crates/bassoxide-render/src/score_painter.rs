@@ -270,16 +270,57 @@ impl<'a> ScorePainter<'a> {
 
                         if staff.staff_type == bassoxide_layout::staff::StaffType::Tablature {
                             if let Some(master_bar) = song.master_bar(m) {
+                                let font =
+                                    egui::FontId::new(11.0, egui::FontFamily::Proportional);
+                                let mut ty = staff_y + 2.0;
                                 if let Some(marker) = &master_bar.marker {
-                                    let font =
-                                        egui::FontId::new(11.0, egui::FontFamily::Proportional);
                                     painter.text(
-                                        Pos2::new(measure_x + 4.0, staff_y + 2.0),
+                                        Pos2::new(measure_x + 4.0, ty),
                                         egui::Align2::LEFT_TOP,
                                         &marker.name,
-                                        font,
+                                        font.clone(),
                                         self.theme.marker_color,
                                     );
+                                    ty += 13.0;
+                                }
+                                for dir in &master_bar.directions {
+                                    let label = match dir {
+                                        bassoxide_core::Direction::Coda => "Coda",
+                                        bassoxide_core::Direction::DoubleCoda => "D.Coda",
+                                        bassoxide_core::Direction::Segno => "Segno",
+                                        bassoxide_core::Direction::SegnoSegno => "Segno×2",
+                                        bassoxide_core::Direction::Fine => "Fine",
+                                        bassoxide_core::Direction::DaCapo => "D.C.",
+                                        bassoxide_core::Direction::DaCapoAlCoda => "D.C. al Coda",
+                                        bassoxide_core::Direction::DaCapoAlDoubleCoda => {
+                                            "D.C. al D.Coda"
+                                        }
+                                        bassoxide_core::Direction::DaCapoAlFine => "D.C. al Fine",
+                                        bassoxide_core::Direction::DalSegno => "D.S.",
+                                        bassoxide_core::Direction::DalSegnoAlCoda => "D.S. al Coda",
+                                        bassoxide_core::Direction::DalSegnoAlDoubleCoda => {
+                                            "D.S. al D.Coda"
+                                        }
+                                        bassoxide_core::Direction::DalSegnoAlFine => "D.S. al Fine",
+                                        bassoxide_core::Direction::DalSegnoSegno => "D.S.S.",
+                                        bassoxide_core::Direction::DalSegnoSegnoAlCoda => {
+                                            "D.S.S. al Coda"
+                                        }
+                                        bassoxide_core::Direction::DalSegnoSegnoAlDoubleCoda => {
+                                            "D.S.S. al D.Coda"
+                                        }
+                                        bassoxide_core::Direction::DalSegnoSegnoAlFine => {
+                                            "D.S.S. al Fine"
+                                        }
+                                    };
+                                    painter.text(
+                                        Pos2::new(measure_x + 4.0, ty),
+                                        egui::Align2::LEFT_TOP,
+                                        label,
+                                        font.clone(),
+                                        self.theme.marker_color,
+                                    );
+                                    ty += 12.0;
                                 }
                             }
                         }

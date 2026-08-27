@@ -73,7 +73,8 @@ fn default_callback_state(device_sr: u32) -> CallbackState {
 /// 音频轨播放器
 pub struct AudioPlayer {
     state: Arc<CallbackState>,
-    _stream: Option<Stream>,
+    /// 输出流；非 Playing 时 pause，降低空闲占用
+    stream: Option<Stream>,
     status: Mutex<PlaybackStatus>,
     paused_score: Mutex<f64>,
     /// 无输出设备时为 true，需 UI tick 推进
@@ -94,10 +95,36 @@ impl AudioPlayer {
     fn new_silent() -> Self {
         Self {
             state: Arc::new(default_callback_state(44100)),
-            _stream: None,
+            stream: None,
             status: Mutex::new(PlaybackStatus::Stopped),
             paused_score: Mutex::new(0.0),
             silent: true,
+        }
+    }
+
+    fn lock_status(&self) -> std::sync::MutexGuard<'_, PlaybackStatus> {
+        self.status
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn lock_paused_score(&self) -> std::sync::MutexGuard<'_, f64> {
+        self.paused_score
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// 非播放时暂停 OS 音频回调，避免空闲占满
+    fn set_stream_active(&self, active: bool) {
+        let Some(stream) = &self.stream else {
+            return;
+        };
+        if active {
+            if let Err(e) = stream.play() {
+                tracing::debug!("音频流 play 失败: {e}");
+            }
+        } else if let Err(e) = stream.pause() {
+            tracing::debug!("音频流 pause 失败: {e}");
         }
     }
 
@@ -149,13 +176,15 @@ impl AudioPlayer {
         }
         .map_err(|e| AudioError::DeviceError(e.to_string()))?;
 
+        // 启动后立刻 pause：仅在 Playing 时跑回调
         stream
             .play()
             .map_err(|e| AudioError::DeviceError(e.to_string()))?;
+        let _ = stream.pause();
 
         Ok(Self {
             state,
-            _stream: Some(stream),
+            stream: Some(stream),
             status: Mutex::new(PlaybackStatus::Stopped),
             paused_score: Mutex::new(0.0),
             silent: false,
@@ -188,7 +217,7 @@ impl AudioPlayer {
     }
 
     pub fn status(&self) -> PlaybackStatus {
-        *self.status.lock().unwrap()
+        *self.lock_status()
     }
 
     pub fn score_position_secs(&self) -> f64 {
@@ -233,22 +262,24 @@ impl AudioPlayer {
 
     /// 更新节拍器调度（谱面秒拍点 + 小节线）
     pub fn set_metronome_schedule(&self, beat_times: Vec<f64>, measure_times: Vec<f64>) {
-        let mut metro = self.state.metro.lock().unwrap();
-        metro.beat_times = beat_times;
-        metro.measure_times = measure_times;
+        if let Ok(mut metro) = self.state.metro.lock() {
+            metro.beat_times = beat_times;
+            metro.measure_times = measure_times;
+        }
         self.state.metro_cursor.store(0, Ordering::Relaxed);
     }
 
     pub fn play(&self) {
-        let status = *self.status.lock().unwrap();
+        let status = *self.lock_status();
         match status {
             PlaybackStatus::Playing => {}
             PlaybackStatus::Paused => {
-                let t = *self.paused_score.lock().unwrap();
+                let t = *self.lock_paused_score();
                 self.state.score_secs.store(t.to_bits(), Ordering::Relaxed);
                 self.resync_metro_cursor(t);
                 self.state.playing.store(true, Ordering::Relaxed);
-                *self.status.lock().unwrap() = PlaybackStatus::Playing;
+                *self.lock_status() = PlaybackStatus::Playing;
+                self.set_stream_active(true);
             }
             PlaybackStatus::Stopped => {
                 let start = self.loop_start_on_play();
@@ -257,7 +288,8 @@ impl AudioPlayer {
                     .store(start.to_bits(), Ordering::Relaxed);
                 self.resync_metro_cursor(start);
                 self.state.playing.store(true, Ordering::Relaxed);
-                *self.status.lock().unwrap() = PlaybackStatus::Playing;
+                *self.lock_status() = PlaybackStatus::Playing;
+                self.set_stream_active(true);
             }
         }
     }
@@ -274,7 +306,9 @@ impl AudioPlayer {
     }
 
     fn resync_metro_cursor(&self, score: f64) {
-        let metro = self.state.metro.lock().unwrap();
+        let Ok(metro) = self.state.metro.lock() else {
+            return;
+        };
         let idx = metro
             .beat_times
             .iter()
@@ -285,10 +319,11 @@ impl AudioPlayer {
     }
 
     pub fn pause(&self) {
-        if *self.status.lock().unwrap() == PlaybackStatus::Playing {
+        if *self.lock_status() == PlaybackStatus::Playing {
             self.state.playing.store(false, Ordering::Relaxed);
-            *self.paused_score.lock().unwrap() = self.score_position_secs();
-            *self.status.lock().unwrap() = PlaybackStatus::Paused;
+            *self.lock_paused_score() = self.score_position_secs();
+            *self.lock_status() = PlaybackStatus::Paused;
+            self.set_stream_active(false);
         }
     }
 
@@ -305,26 +340,28 @@ impl AudioPlayer {
         self.state
             .score_secs
             .store(0f64.to_bits(), Ordering::Relaxed);
-        *self.paused_score.lock().unwrap() = 0.0;
+        *self.lock_paused_score() = 0.0;
         self.state.click_samples_left.store(0, Ordering::Relaxed);
         self.state.metro_cursor.store(0, Ordering::Relaxed);
-        *self.status.lock().unwrap() = PlaybackStatus::Stopped;
+        *self.lock_status() = PlaybackStatus::Stopped;
+        self.set_stream_active(false);
     }
 
     pub fn seek_score_secs(&self, secs: f64) {
         let secs = secs.max(0.0);
         self.state.score_secs.store(secs.to_bits(), Ordering::Relaxed);
-        *self.paused_score.lock().unwrap() = secs;
+        *self.lock_paused_score() = secs;
         self.resync_metro_cursor(secs);
     }
 
     /// 无声卡模式下由 UI 每帧调用推进时间；有声卡时回调已推进，此处只同步结束状态。
     pub fn tick(&self, dt_secs: f64) {
-        if *self.status.lock().unwrap() != PlaybackStatus::Playing {
+        if *self.lock_status() != PlaybackStatus::Playing {
             return;
         }
         if !self.state.playing.load(Ordering::Relaxed) {
-            *self.status.lock().unwrap() = PlaybackStatus::Stopped;
+            *self.lock_status() = PlaybackStatus::Stopped;
+            self.set_stream_active(false);
             return;
         }
 
