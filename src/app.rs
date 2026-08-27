@@ -196,11 +196,10 @@ impl eframe::App for BassoxideApp {
                 transport::transport_bar(ui, &mut self.state);
             });
 
-        // 底部整体：音频同步轨 + 轨道（贴边、无圆角、无阴影）
-        egui::TopBottomPanel::bottom("bottom_dock")
-            .resizable(true)
-            .default_height(320.0)
-            .min_height(180.0)
+        // 底部整体：音频同步轨 + 轨道（贴边、无圆角；固定高度避免鼠标误触拉伸上移）
+        egui::TopBottomPanel::bottom("bottom_dock_fixed")
+            .resizable(false)
+            .exact_height(300.0)
             .show_separator_line(true)
             .frame(
                 egui::Frame::NONE
@@ -208,7 +207,7 @@ impl eframe::App for BassoxideApp {
                     .inner_margin(egui::Margin {
                         left: 10,
                         right: 10,
-                        top: 14,
+                        top: 12,
                         bottom: 6,
                     })
                     .outer_margin(egui::Margin::ZERO)
@@ -217,19 +216,12 @@ impl eframe::App for BassoxideApp {
                     .stroke(egui::Stroke::NONE),
             )
             .show(ctx, |ui| {
-                // 与谱面区留出间距，避免音频同步轨贴顶
+                // 与谱面区留白；内容按自然高度堆叠，避免比例分配随 hover 抖动
+                ui.add_space(6.0);
+                crate::ui::audio_track::audio_track_panel(ui, &mut self.state);
                 ui.add_space(4.0);
-                // 上：音频同步；下：轨道列表 — 同一表面、直角分界
-                let total = ui.available_height();
-                let audio_h = (total * 0.48).clamp(120.0, 200.0);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), audio_h),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        crate::ui::audio_track::audio_track_panel(ui, &mut self.state);
-                    },
-                );
                 ui.separator();
+                ui.add_space(2.0);
                 crate::ui::timeline::timeline_panel(ui, &mut self.state);
             });
 

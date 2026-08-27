@@ -193,21 +193,33 @@ pub fn audio_track_panel(ui: &mut Ui, state: &mut AppState) {
     let mut pending_offset: Option<f64> = None;
     let (pps, view0, sync_offset, duration_secs, peaks, beat_times, measure_times) = {
         let track = state.audio_track.as_mut().unwrap();
-        if response.dragged() {
-            let dx = response.drag_delta().x;
-            if ui.input(|i| i.modifiers.shift) {
-                track.view_start_secs -= f64::from(dx) / f64::from(track.pixels_per_second);
-                track.view_start_secs = track.view_start_secs.max(0.0);
-            } else {
-                track.sync_offset_secs += f64::from(dx) / f64::from(track.pixels_per_second);
-                pending_offset = Some(track.sync_offset_secs);
+        // 仅处理水平拖拽；忽略竖直分量，避免与面板/窗口交互冲突
+        if response.dragged_by(egui::PointerButton::Primary) {
+            let delta = response.drag_delta();
+            if delta.x.abs() >= delta.y.abs() {
+                let dx = delta.x;
+                if ui.input(|i| i.modifiers.shift) {
+                    track.view_start_secs -=
+                        f64::from(dx) / f64::from(track.pixels_per_second);
+                    track.view_start_secs = track.view_start_secs.max(0.0);
+                } else {
+                    track.sync_offset_secs +=
+                        f64::from(dx) / f64::from(track.pixels_per_second);
+                    pending_offset = Some(track.sync_offset_secs);
+                }
             }
         }
+        // 滚轮缩放：只在指针位于波形区时生效，并消费滚动避免传到其它面板
         if response.hovered() {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll.abs() > 0.1 {
                 let zoom = 1.0 + scroll * 0.002;
-                track.pixels_per_second = (track.pixels_per_second * zoom).clamp(20.0, 400.0);
+                track.pixels_per_second =
+                    (track.pixels_per_second * zoom).clamp(20.0, 400.0);
+                ui.ctx().input_mut(|i| {
+                    i.smooth_scroll_delta.y = 0.0;
+                    i.raw_scroll_delta.y = 0.0;
+                });
             }
         }
         (
