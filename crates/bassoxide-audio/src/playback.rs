@@ -55,6 +55,34 @@ struct PlayState {
 
 impl AudioEngine {
     pub fn new() -> Result<Self> {
+        match Self::new_with_device() {
+            Ok(engine) => Ok(engine),
+            Err(device_err) => {
+                // 无音频设备时仍加载 SoundFont，保证混音台可枚举音色
+                tracing::warn!("Audio device unavailable ({device_err}); starting synth-only engine");
+                Self::new_synth_only(44100)
+            }
+        }
+    }
+
+    fn new_synth_only(sample_rate: i32) -> Result<Self> {
+        let synth = Arc::new(Synth::new(sample_rate)?);
+        let play_state = Arc::new(Mutex::new(PlayState {
+            status: PlaybackStatus::Stopped,
+            current_tick: 0,
+            bpm: 120,
+            events: Vec::new(),
+            event_idx: 0,
+        }));
+        Self::start_sequencer(play_state.clone(), synth.clone());
+        Ok(Self {
+            _stream: None,
+            synth,
+            play_state,
+        })
+    }
+
+    fn new_with_device() -> Result<Self> {
         let host = cpal::default_host();
         let device = host.default_output_device()
             .ok_or_else(|| AudioError::DeviceError("No output device available".to_string()))?;

@@ -74,15 +74,20 @@ impl BassoxideApp {
             .add_filter("All files", &["*"])
             .pick_file()
         {
-            let path_str = path.display().to_string();
-            match bassoxide_io::load_from_path(&path) {
-                Ok(song) => {
-                    self.state.load_song(song, Some(path_str));
-                }
-                Err(e) => {
-                    self.state.status_message = format!("加载失败: {e}");
-                    tracing::error!("Failed to load file: {e}");
-                }
+            self.open_path(&path);
+        }
+    }
+
+    /// 从路径加载乐谱
+    pub fn open_path(&mut self, path: &std::path::Path) {
+        let path_str = path.display().to_string();
+        match bassoxide_io::load_from_path(path) {
+            Ok(song) => {
+                self.state.load_song(song, Some(path_str));
+            }
+            Err(e) => {
+                self.state.status_message = format!("加载失败: {e}");
+                tracing::error!("Failed to load file: {e}");
             }
         }
     }
