@@ -162,6 +162,7 @@ impl<'a> ScorePainter<'a> {
                                     painter,
                                     &rhythm_beats,
                                     baseline_y,
+                                    measure_pos.width,
                                     self.settings,
                                     self.theme,
                                 );

@@ -29,26 +29,34 @@ fn beam_level(value: NoteValue) -> u8 {
     }
 }
 
-/// 根据小节内节拍平均间距相对参考间距，得到符杆密度缩放（小节变窄时符杆变短）
-fn density_scale(beats: &[RhythmBeat], settings: &LayoutSettings) -> f32 {
+/// 根据小节宽度与节拍间距，得到符杆缩放（小节变窄时符杆变短）
+fn stem_fit_scale(beats: &[RhythmBeat], measure_width: f32, settings: &LayoutSettings) -> f32 {
+    let ref_measure = (settings.min_measure_width * 2.2).max(120.0);
+    let measure_s = (measure_width / ref_measure).clamp(0.38, 1.05);
+
     let ref_gap = settings.reference_beat_gap();
     let avg_gap = if beats.len() >= 2 {
         let span = (beats.last().unwrap().x - beats.first().unwrap().x).abs();
         span / (beats.len() - 1) as f32
     } else {
-        ref_gap
+        // 单音时按小节内可用宽度估计
+        (measure_width * 0.35).max(ref_gap * 0.5)
     };
-    // 小节被挤窄时缩小符杆；纸张缩放已体现在 rhythm_height / font / ref_gap 中
-    (avg_gap / ref_gap).clamp(0.42, 1.12)
+    let dens_s = (avg_gap / ref_gap).clamp(0.4, 1.05);
+
+    // 取更紧的一侧，保证挤窄小节时符杆明显缩短
+    (measure_s * dens_s).sqrt().clamp(0.4, 1.05)
 }
 
 /// 绘制一小节的节奏符杆。
 ///
 /// `baseline_y` 为符干顶端 Y（一般是六线谱底线下方一点）。
+/// `measure_width` 用于按小节实际宽度压缩符杆。
 pub fn draw_measure_rhythm(
     painter: &Painter,
     beats: &[RhythmBeat],
     baseline_y: f32,
+    measure_width: f32,
     settings: &LayoutSettings,
     theme: &Theme,
 ) {
@@ -56,21 +64,21 @@ pub fn draw_measure_rhythm(
         return;
     }
 
-    let dens = density_scale(beats, settings);
-    let stem_len = ((settings.rhythm_height * 0.55).max(settings.tab_font_size * 0.75) * dens)
-        .clamp(6.0, settings.rhythm_height.max(10.0));
+    let dens = stem_fit_scale(beats, measure_width, settings);
+    let stem_len = ((settings.rhythm_height * 0.48).max(settings.tab_font_size * 0.65) * dens)
+        .clamp(5.0, settings.rhythm_height.max(8.0));
     let stem_top = baseline_y;
     let stem_bottom = baseline_y + stem_len;
     let stem_stroke = Stroke::new(
-        (settings.tab_font_size * 0.09 * dens).clamp(0.8, 2.2),
+        (settings.tab_font_size * 0.085 * dens).clamp(0.7, 2.0),
         theme.note_text,
     );
-    let beam_thickness = ((settings.tab_font_size * 0.12).max(settings.rhythm_height * 0.08) * dens)
-        .clamp(1.0, 3.0);
-    let beam_gap = (beam_thickness + 1.4 * dens).max(2.0);
-    let stub_len = (5.5 * dens).max(3.0);
-    let dot_r = (1.2 * dens).clamp(0.8, 1.8);
-    let flag_scale = dens.clamp(0.45, 1.2);
+    let beam_thickness = ((settings.tab_font_size * 0.11).max(settings.rhythm_height * 0.07) * dens)
+        .clamp(0.9, 2.8);
+    let beam_gap = (beam_thickness + 1.2 * dens).max(1.8);
+    let stub_len = (5.0 * dens).max(2.5);
+    let dot_r = (1.1 * dens).clamp(0.7, 1.6);
+    let flag_scale = dens.clamp(0.4, 1.1);
 
     // 计算每个 beat 的节奏属性
     let n = beats.len();

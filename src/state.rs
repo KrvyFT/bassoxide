@@ -141,9 +141,14 @@ impl AppState {
         self.layout_settings.staff_line_spacing = (p.line_spacing * s).max(5.0);
         self.layout_settings.system_gap = (p.row_spacing * s).max(24.0);
         self.layout_settings.measures_per_line = p.measures_per_line;
-        // 符杆区域随字体与纸张同步缩放
+        // 符杆区域随字体、纸张与每行小节密度同步缩放
+        let pack = if p.measures_per_line > 0 {
+            (2.6 / f32::from(p.measures_per_line)).clamp(0.45, 1.0)
+        } else {
+            1.0
+        };
         self.layout_settings.rhythm_height =
-            (p.font_size * 2.0 * s).clamp(12.0 * paper_s, 56.0 * paper_s.max(1.0));
+            (p.font_size * 1.85 * s * pack).clamp(10.0 * paper_s, 52.0 * paper_s.max(1.0));
 
         self.layout_settings.margin_top = base.margin_top * s;
         self.layout_settings.margin_left = base.margin_left * s;
