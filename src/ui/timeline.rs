@@ -66,65 +66,103 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
     let current_selected = state.selected_track;
 
     let full_w = ui.available_width();
-    egui::Frame::new()
+    // 直角整块列表，行与行密接，无卡片圆角
+    egui::Frame::NONE
         .fill(palette.surface_container_high)
         .corner_radius(egui::CornerRadius::ZERO)
-        .inner_margin(egui::Margin::symmetric(8, 6))
+        .inner_margin(egui::Margin::ZERO)
         .show(ui, |ui| {
-            ui.set_min_width(full_w - 4.0);
+            ui.set_min_width(full_w);
             egui::ScrollArea::vertical()
-                .max_height(120.0)
+                .max_height(ui.available_height().max(80.0))
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
+                    ui.spacing_mut().item_spacing.y = 0.0;
                     if let Some(song) = &mut state.song {
                         for (i, track) in song.tracks.iter_mut().enumerate() {
                             let row_w = ui.available_width();
-                            let row_h = 34.0;
+                            let row_h = 32.0;
                             let selected = i == current_selected;
+                            let row_fill = if selected {
+                                palette.primary_container
+                            } else if i % 2 == 0 {
+                                palette.surface_container
+                            } else {
+                                palette.surface_container_high
+                            };
 
-                            egui::Frame::new()
-                                .fill(if selected {
-                                    palette.primary_container
+                            let (row_rect, row_resp) = ui.allocate_exact_size(
+                                egui::vec2(row_w, row_h),
+                                egui::Sense::click(),
+                            );
+                            ui.painter().rect_filled(row_rect, egui::CornerRadius::ZERO, row_fill);
+
+                            // 底部分隔线（直角）
+                            ui.painter().hline(
+                                row_rect.x_range(),
+                                row_rect.bottom() - 0.5,
+                                egui::Stroke::new(1.0_f32, palette.outline_variant),
+                            );
+
+                            let label = format!("Trk {}: {}", i + 1, track.name);
+                            let name = gm_name(track.midi_bank, track.midi_program);
+
+                            // 名称区
+                            let name_rect = egui::Rect::from_min_size(
+                                row_rect.min + egui::vec2(8.0, 0.0),
+                                egui::vec2(220.0, row_h),
+                            );
+                            ui.painter().text(
+                                name_rect.left_center(),
+                                egui::Align2::LEFT_CENTER,
+                                label,
+                                egui::FontId::proportional(13.0),
+                                if selected {
+                                    palette.on_primary_container
                                 } else {
-                                    palette.surface_container
-                                })
-                                .corner_radius(egui::CornerRadius::ZERO)
-                                .inner_margin(egui::Margin::symmetric(8, 4))
-                                .show(ui, |ui| {
-                                    ui.set_min_width(row_w - 4.0);
-                                    ui.horizontal(|ui| {
-                                        ui.set_height(row_h);
+                                    palette.on_surface
+                                },
+                            );
 
-                                        let label = format!("Trk {}: {}", i + 1, track.name);
-                                        let name_resp = ui.add_sized(
-                                            [220.0, row_h],
-                                            egui::SelectableLabel::new(selected, label),
-                                        );
-                                        if name_resp
-                                            .on_hover_text("点击仅显示该轨道")
-                                            .clicked()
-                                        {
-                                            select_change = Some(i);
-                                        }
+                            // 乐器区（直角按钮）
+                            let inst_x = name_rect.right() + 8.0;
+                            let inst_w = (row_rect.right() - inst_x - 8.0).max(120.0);
+                            let inst_rect = egui::Rect::from_min_size(
+                                egui::pos2(inst_x, row_rect.top() + 4.0),
+                                egui::vec2(inst_w, row_h - 8.0),
+                            );
+                            ui.painter().rect_filled(
+                                inst_rect,
+                                egui::CornerRadius::ZERO,
+                                palette.primary_container,
+                            );
+                            ui.painter().text(
+                                inst_rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                name,
+                                egui::FontId::proportional(12.0),
+                                palette.on_primary_container,
+                            );
 
-                                        let name = gm_name(track.midi_bank, track.midi_program);
-                                        let instrument_w = (ui.available_width() - 8.0).max(140.0);
-                                        let instrument_btn = egui::Button::new(
-                                            egui::RichText::new(name)
-                                                .color(palette.on_primary_container),
-                                        )
-                                        .fill(palette.primary_container);
-                                        if ui
-                                            .add_sized([instrument_w, row_h], instrument_btn)
-                                            .on_hover_text("配置谱面类型与轨道乐器标注")
-                                            .clicked()
-                                        {
-                                            open_popup = Some(i);
-                                        }
-                                    });
-                                });
-                            ui.add_space(2.0);
+                            let name_click = row_resp
+                                .clone()
+                                .with_new_rect(name_rect)
+                                .on_hover_text("点击仅显示该轨道");
+                            // 用交互：整行点击选轨；点乐器区打开弹窗
+                            let pointer = row_resp.interact_pointer_pos();
+                            if row_resp.clicked() {
+                                if let Some(pos) = pointer {
+                                    if inst_rect.contains(pos) {
+                                        open_popup = Some(i);
+                                    } else {
+                                        select_change = Some(i);
+                                    }
+                                } else {
+                                    select_change = Some(i);
+                                }
+                            }
+                            let _ = name_click;
                         }
                     } else {
                         ui.label(

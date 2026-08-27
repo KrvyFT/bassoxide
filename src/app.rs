@@ -196,21 +196,33 @@ impl eframe::App for BassoxideApp {
                 transport::transport_bar(ui, &mut self.state);
             });
 
-        // 底部整体：音频同步轨 + 轨道面板（无圆角、同一表面）
+        // 底部整体：音频同步轨 + 轨道（贴边、无圆角、无阴影）
         egui::TopBottomPanel::bottom("bottom_dock")
             .resizable(true)
-            .default_height(300.0)
+            .default_height(320.0)
+            .min_height(180.0)
+            .show_separator_line(true)
             .frame(
-                egui::Frame::side_top_panel(&ctx.style())
+                egui::Frame::NONE
                     .fill(palette.surface_container)
-                    .inner_margin(egui::Margin::symmetric(12, 8))
-                    .corner_radius(egui::CornerRadius::ZERO),
+                    .inner_margin(egui::Margin::symmetric(10, 6))
+                    .outer_margin(egui::Margin::ZERO)
+                    .corner_radius(egui::CornerRadius::ZERO)
+                    .shadow(egui::epaint::Shadow::NONE)
+                    .stroke(egui::Stroke::NONE),
             )
             .show(ctx, |ui| {
-                crate::ui::audio_track::audio_track_panel(ui, &mut self.state);
-                ui.add_space(6.0);
+                // 上：音频同步；下：轨道列表 — 同一表面、直角分界
+                let total = ui.available_height();
+                let audio_h = (total * 0.48).clamp(120.0, 200.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), audio_h),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        crate::ui::audio_track::audio_track_panel(ui, &mut self.state);
+                    },
+                );
                 ui.separator();
-                ui.add_space(4.0);
                 crate::ui::timeline::timeline_panel(ui, &mut self.state);
             });
 

@@ -74,7 +74,8 @@ pub fn audio_track_panel(ui: &mut Ui, state: &mut AppState) {
                 egui::Button::new(
                     egui::RichText::new("添加音频…").color(palette.on_primary),
                 )
-                .fill(palette.primary),
+                .fill(palette.primary)
+                .corner_radius(egui::CornerRadius::ZERO),
             )
             .on_hover_text("支持 WAV / FLAC / MP3 / OGG 等")
             .clicked()
@@ -91,7 +92,11 @@ pub fn audio_track_panel(ui: &mut Ui, state: &mut AppState) {
             }
         }
 
-        if state.audio_track.is_some() && ui.button("清除音频").clicked() {
+        if state.audio_track.is_some()
+            && ui
+                .add(egui::Button::new("清除音频").corner_radius(egui::CornerRadius::ZERO))
+                .clicked()
+        {
             clear = true;
         }
 
@@ -106,7 +111,10 @@ pub fn audio_track_panel(ui: &mut Ui, state: &mut AppState) {
                 .color(palette.on_surface_variant),
             );
 
-            if ui.button("重置偏移").clicked() {
+            if ui
+                .add(egui::Button::new("重置偏移").corner_radius(egui::CornerRadius::ZERO))
+                .clicked()
+            {
                 track.sync_offset_secs = 0.0;
                 reset_offset = true;
             }
@@ -221,7 +229,7 @@ pub fn audio_track_panel(ui: &mut Ui, state: &mut AppState) {
 
     let to_x = |score_t: f64| -> f32 { rect.left() + ((score_t - view0) as f32) * pps };
 
-    painter.rect_filled(rect, 0.0, palette.surface_container_high);
+    painter.rect_filled(rect, egui::CornerRadius::ZERO, palette.surface_container_high);
 
     let ruler_rect = Rect::from_min_max(
         Pos2::new(rect.left(), rect.top()),
@@ -232,7 +240,7 @@ pub fn audio_track_panel(ui: &mut Ui, state: &mut AppState) {
         Pos2::new(rect.right(), rect.bottom()),
     );
 
-    painter.rect_filled(ruler_rect, 0.0, palette.surface_container);
+    painter.rect_filled(ruler_rect, egui::CornerRadius::ZERO, palette.surface_container);
     painter.text(
         Pos2::new(ruler_rect.left() + 6.0, ruler_rect.top() + 4.0),
         egui::Align2::LEFT_TOP,
@@ -251,7 +259,7 @@ pub fn audio_track_panel(ui: &mut Ui, state: &mut AppState) {
         palette.on_surface_variant,
     );
 
-    painter.rect_filled(wave_rect, 0.0, palette.surface);
+    painter.rect_filled(wave_rect, egui::CornerRadius::ZERO, palette.surface);
     draw_waveform_peaks(
         &painter,
         wave_rect,
