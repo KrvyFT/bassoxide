@@ -50,10 +50,37 @@ struct Gp7Note {
     pub hammer_pull: bool, // 泛指击勾弦
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Gp7Rhythm {
-    primary: i32,
-    dot: bool,
+    value: NoteValue,
+    dots: u8,
+    tuplet_num: u8,
+    tuplet_den: u8,
+}
+
+impl Default for Gp7Rhythm {
+    fn default() -> Self {
+        Self {
+            value: NoteValue::Quarter,
+            dots: 0,
+            tuplet_num: 1,
+            tuplet_den: 1,
+        }
+    }
+}
+
+/// 解析 GPIF 的 NoteValue 字符串为 NoteValue
+fn parse_gp_note_value(s: &str) -> NoteValue {
+    match s.trim() {
+        "Whole" => NoteValue::Whole,
+        "Half" => NoteValue::Half,
+        "Quarter" => NoteValue::Quarter,
+        "Eighth" => NoteValue::Eighth,
+        "16th" | "Sixteenth" => NoteValue::Sixteenth,
+        "32nd" | "ThirtySecond" => NoteValue::ThirtySecond,
+        "64th" | "SixtyFourth" => NoteValue::SixtyFourth,
+        _ => NoteValue::Quarter,
+    }
 }
 
 /// 解析 GP7/GP8 文件
@@ -210,11 +237,29 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                         continue;
                     }
                     let mut rhythm = Gp7Rhythm::default();
-                    if let Some(p) = node.descendants().find(|n| n.has_tag_name("Primary")) {
-                        rhythm.primary = p.text().unwrap_or("4").parse().unwrap_or(4);
+                    if let Some(nv) = node
+                        .descendants()
+                        .find(|n| n.has_tag_name("NoteValue"))
+                        .and_then(|n| n.text())
+                    {
+                        rhythm.value = parse_gp_note_value(nv);
                     }
-                    if node.descendants().any(|n| n.has_tag_name("Dot")) {
-                        rhythm.dot = true;
+                    if let Some(dot) = node.descendants().find(|n| n.has_tag_name("AugmentationDot"))
+                    {
+                        rhythm.dots = dot
+                            .attribute("count")
+                            .and_then(|c| c.parse().ok())
+                            .unwrap_or(1);
+                    }
+                    if let Some(tp) = node.descendants().find(|n| n.has_tag_name("PrimaryTuplet")) {
+                        rhythm.tuplet_num = tp
+                            .attribute("num")
+                            .and_then(|c| c.parse().ok())
+                            .unwrap_or(1);
+                        rhythm.tuplet_den = tp
+                            .attribute("den")
+                            .and_then(|c| c.parse().ok())
+                            .unwrap_or(1);
                     }
                     rhythms_map.insert(id, rhythm);
                 }
@@ -351,20 +396,12 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                                 if let Some(gp7_beat) = beats_map.get(beat_id) {
                                     if let Some(gp7_rhythm) = rhythms_map.get(&gp7_beat.rhythm_ref)
                                     {
-                                        let val = match gp7_rhythm.primary {
-                                            1 => NoteValue::Whole,
-                                            2 => NoteValue::Half,
-                                            4 => NoteValue::Quarter,
-                                            8 => NoteValue::Eighth,
-                                            16 => NoteValue::Sixteenth,
-                                            32 => NoteValue::ThirtySecond,
-                                            64 => NoteValue::SixtyFourth,
-                                            _ => NoteValue::Quarter,
-                                        };
                                         beat.duration = Duration {
-                                            value: val,
-                                            dotted: gp7_rhythm.dot,
-                                            ..Default::default()
+                                            value: gp7_rhythm.value,
+                                            dotted: gp7_rhythm.dots >= 1,
+                                            double_dotted: gp7_rhythm.dots >= 2,
+                                            tuplet_numerator: gp7_rhythm.tuplet_num.max(1),
+                                            tuplet_denominator: gp7_rhythm.tuplet_den.max(1),
                                         };
                                     }
 
