@@ -1,6 +1,6 @@
 //! 标准 MIDI (.mid) 解析器
 
-use bassoxide_core::beat::{Beat, Voice};
+use bassoxide_core::beat::Beat;
 use bassoxide_core::measure::{MasterBar, Measure};
 use bassoxide_core::note::{Note, NoteType};
 use bassoxide_core::song::{Song, SongInfo};

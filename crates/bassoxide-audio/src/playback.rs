@@ -1,9 +1,7 @@
-//! PCM 文件回放（非 MIDI）。按「谱面时间」推进，用 sync_offset 对齐音频。
+//! PCM 文件回放（非 MIDI）。谱面时间由 UI 帧时钟推进，音频回调只读位置取采样。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, StreamConfig};
@@ -38,23 +36,21 @@ impl AudioPlayer {
         match Self::try_new_with_device() {
             Ok(p) => Ok(p),
             Err(e) => {
-                tracing::warn!("音频设备不可用 ({e})；使用软件时钟播放器");
+                tracing::warn!("音频设备不可用 ({e})；仅使用 UI 时钟推进播放头");
                 Ok(Self::new_silent())
             }
         }
     }
 
     fn new_silent() -> Self {
-        let state = Arc::new(CallbackState {
-            samples: Mutex::new(Arc::new(Vec::new())),
-            source_sr: Mutex::new(44100),
-            score_secs: AtomicU64::new(0f64.to_bits()),
-            sync_offset: AtomicU64::new(0f64.to_bits()),
-            playing: AtomicBool::new(false),
-        });
-        start_soft_clock(state.clone());
         Self {
-            state,
+            state: Arc::new(CallbackState {
+                samples: Mutex::new(Arc::new(Vec::new())),
+                source_sr: Mutex::new(44100),
+                score_secs: AtomicU64::new(0f64.to_bits()),
+                sync_offset: AtomicU64::new(0f64.to_bits()),
+                playing: AtomicBool::new(false),
+            }),
             _stream: None,
             status: Mutex::new(PlaybackStatus::Stopped),
             paused_score: Mutex::new(0.0),
@@ -71,7 +67,6 @@ impl AudioPlayer {
             .map_err(|e| AudioError::DeviceError(e.to_string()))?;
         let sample_format = config.sample_format();
         let stream_config: StreamConfig = config.into();
-        let device_sr = stream_config.sample_rate.0;
         let channels = stream_config.channels as usize;
 
         let state = Arc::new(CallbackState {
@@ -85,10 +80,11 @@ impl AudioPlayer {
         let state_cb = state.clone();
         let err_fn = |e| tracing::error!("音频流错误: {e}");
 
+        // 回调只负责出声，不推进时间（时间由 UI tick 统一推进）
         let stream = match sample_format {
             SampleFormat::F32 => device.build_output_stream(
                 &stream_config,
-                move |data: &mut [f32], _| fill_output(data, channels, device_sr, &state_cb),
+                move |data: &mut [f32], _| fill_output(data, channels, &state_cb),
                 err_fn,
                 None,
             ),
@@ -98,7 +94,7 @@ impl AudioPlayer {
                     &stream_config,
                     move |data: &mut [i16], _| {
                         let mut tmp = vec![0.0f32; data.len()];
-                        fill_output(&mut tmp, channels, device_sr, &state_cb);
+                        fill_output(&mut tmp, channels, &state_cb);
                         for (o, s) in data.iter_mut().zip(tmp.iter()) {
                             *o = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
                         }
@@ -198,38 +194,35 @@ impl AudioPlayer {
         self.state.score_secs.store(secs.to_bits(), Ordering::Relaxed);
         *self.paused_score.lock().unwrap() = secs;
     }
-}
 
-fn start_soft_clock(state: Arc<CallbackState>) {
-    thread::spawn(move || {
-        let mut last = Instant::now();
-        loop {
-            thread::sleep(Duration::from_millis(16));
-            if !state.playing.load(Ordering::Relaxed) {
-                last = Instant::now();
-                continue;
-            }
-            let now = Instant::now();
-            let dt = now.duration_since(last).as_secs_f64();
-            last = now;
-            let score = f64::from_bits(state.score_secs.load(Ordering::Relaxed)) + dt;
-            state.score_secs.store(score.to_bits(), Ordering::Relaxed);
-
-            let samples = state.samples.lock().unwrap().clone();
-            let sr = *state.source_sr.lock().unwrap();
-            if !samples.is_empty() && sr > 0 {
-                let sync = f64::from_bits(state.sync_offset.load(Ordering::Relaxed));
-                let audio_t = score - sync;
-                let dur = samples.len() as f64 / f64::from(sr);
-                if audio_t >= dur {
-                    state.playing.store(false, Ordering::Relaxed);
-                }
-            }
+    /// 由 UI 每帧调用：推进谱面时间；到音频末尾自动停止。
+    pub fn tick(&self, dt_secs: f64) {
+        if *self.status.lock().unwrap() != PlaybackStatus::Playing {
+            return;
         }
-    });
+        if !self.state.playing.load(Ordering::Relaxed) {
+            // 回调侧可能已停；同步状态
+            *self.status.lock().unwrap() = PlaybackStatus::Stopped;
+            return;
+        }
+        let dt = dt_secs.clamp(0.0, 0.1);
+        let score = self.score_position_secs() + dt;
+        self.state.score_secs.store(score.to_bits(), Ordering::Relaxed);
+
+        let samples = self.state.samples.lock().unwrap().clone();
+        let sr = *self.state.source_sr.lock().unwrap();
+        if samples.is_empty() || sr == 0 {
+            return;
+        }
+        let sync = self.sync_offset();
+        let dur = samples.len() as f64 / f64::from(sr);
+        if score - sync >= dur {
+            self.stop();
+        }
+    }
 }
 
-fn fill_output(data: &mut [f32], channels: usize, device_sr: u32, state: &CallbackState) {
+fn fill_output(data: &mut [f32], channels: usize, state: &CallbackState) {
     data.fill(0.0);
     if !state.playing.load(Ordering::Relaxed) {
         return;
@@ -237,34 +230,50 @@ fn fill_output(data: &mut [f32], channels: usize, device_sr: u32, state: &Callba
 
     let samples = state.samples.lock().unwrap().clone();
     let source_sr = *state.source_sr.lock().unwrap();
-    if samples.is_empty() || source_sr == 0 || device_sr == 0 {
+    if samples.is_empty() || source_sr == 0 {
         return;
     }
 
     let sync = f64::from_bits(state.sync_offset.load(Ordering::Relaxed));
-    let mut score = f64::from_bits(state.score_secs.load(Ordering::Relaxed));
-    let dt = 1.0 / f64::from(device_sr);
+    let score = f64::from_bits(state.score_secs.load(Ordering::Relaxed));
     let duration = samples.len() as f64 / f64::from(source_sr);
+    let audio_t = score - sync;
+
+    // 整块缓冲用同一时刻近似（精细相位由 UI tick 高频刷新）
+    let mut sample = 0.0_f32;
+    if audio_t >= 0.0 && audio_t < duration {
+        let idx_f = audio_t * f64::from(source_sr);
+        let idx = idx_f.floor() as usize;
+        if idx + 1 < samples.len() {
+            let frac = (idx_f - idx as f64) as f32;
+            sample = samples[idx] * (1.0 - frac) + samples[idx + 1] * frac;
+        } else if idx < samples.len() {
+            sample = samples[idx];
+        }
+    }
 
     for frame in data.chunks_mut(channels) {
-        let audio_t = score - sync;
-        let mut sample = 0.0_f32;
-        if audio_t >= 0.0 && audio_t < duration {
-            let idx_f = audio_t * f64::from(source_sr);
-            let idx = idx_f.floor() as usize;
-            if idx + 1 < samples.len() {
-                let frac = (idx_f - idx as f64) as f32;
-                sample = samples[idx] * (1.0 - frac) + samples[idx + 1] * frac;
-            } else if idx < samples.len() {
-                sample = samples[idx];
-            }
-        } else if audio_t >= duration {
-            state.playing.store(false, Ordering::Relaxed);
-        }
         for ch in frame.iter_mut() {
             *ch = sample;
         }
-        score += dt;
     }
-    state.score_secs.store(score.to_bits(), Ordering::Relaxed);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tick_advances_while_playing() {
+        let player = AudioPlayer::new_silent();
+        let samples = Arc::new(vec![0.1_f32; 44100 * 4]); // 4s
+        player.set_audio(samples, 44100);
+        player.play();
+        assert_eq!(player.status(), PlaybackStatus::Playing);
+        player.tick(0.5);
+        let t = player.score_position_secs();
+        assert!((t - 0.5).abs() < 1e-6, "t={t}");
+        player.tick(0.25);
+        assert!((player.score_position_secs() - 0.75).abs() < 1e-6);
+    }
 }

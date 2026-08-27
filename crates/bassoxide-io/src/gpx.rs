@@ -1,6 +1,6 @@
 //! Guitar Pro 6 (.gpx) 解析器
 
-use bassoxide_core::song::{Song, SongInfo};
+use bassoxide_core::song::Song;
 use bassoxide_core::track::Track;
 use std::io::Read;
 use roxmltree::Document;

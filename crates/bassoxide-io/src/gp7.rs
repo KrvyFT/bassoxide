@@ -3,7 +3,7 @@
 use bassoxide_core::beat::{Beat, Voice};
 use bassoxide_core::measure::{MasterBar, Measure};
 use bassoxide_core::note::Note;
-use bassoxide_core::song::{Song, SongInfo};
+use bassoxide_core::song::Song;
 use bassoxide_core::track::{Track, Tuning};
 use bassoxide_core::types::{Duration, NoteValue, TimeSignature};
 use roxmltree::{Document, Node};
