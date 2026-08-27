@@ -141,19 +141,7 @@ impl<'a> ScorePainter<'a> {
                                     if let Some(beat) = voice.beats.get(bp.beat_index) {
                                         let beat_x = measure_x + bp.x;
 
-                                        if beat.is_empty() {
-                                            if staff.staff_type
-                                                == bassoxide_layout::staff::StaffType::Tablature
-                                            {
-                                                note_render::draw_rest(
-                                                    painter,
-                                                    beat_x,
-                                                    staff_y,
-                                                    staff.height,
-                                                    self.theme,
-                                                );
-                                            }
-                                        } else {
+                                        if !beat.is_empty() {
                                             for note in &beat.notes {
                                                 self.paint_note(
                                                     painter, staff, note, beat_x, staff_y, track,

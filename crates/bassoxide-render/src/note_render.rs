@@ -170,23 +170,3 @@ pub fn draw_standard_note(
     );
 }
 
-
-/// 绘制休止符标记
-pub fn draw_rest(
-    painter: &Painter,
-    x: f32,
-    staff_y: f32,
-    staff_height: f32,
-    theme: &Theme,
-) {
-    let font = egui::FontId::new(14.0, egui::FontFamily::Monospace);
-    let center_y = staff_y + staff_height / 2.0;
-
-    painter.text(
-        Pos2::new(x, center_y),
-        egui::Align2::CENTER_CENTER,
-        "𝄾", // 四分休止符 unicode
-        font,
-        theme.rest_color,
-    );
-}
