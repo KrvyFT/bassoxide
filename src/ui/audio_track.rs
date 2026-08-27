@@ -143,6 +143,7 @@ pub fn audio_track_panel(ui: &mut Ui, state: &mut AppState) {
                     track.analysis.measure_times.len()
                 );
                 state.audio_track = Some(track);
+                state.sync_playback_tools_to_player();
             }
             Err(e) => {
                 state.status_message = format!("音频加载失败: {e}");
@@ -345,6 +346,60 @@ pub fn audio_track_panel(ui: &mut Ui, state: &mut AppState) {
             [Pos2::new(ph_x, rect.top()), Pos2::new(ph_x, rect.bottom())],
             Stroke::new(2.0_f32, palette.error),
         );
+    }
+
+    // A-B 循环标记
+    let loop_color_a = Color32::from_rgb(0x1B, 0x6E, 0xF3);
+    let loop_color_b = Color32::from_rgb(0xE8, 0x6A, 0x17);
+    if let Some(a) = state.loop_a {
+        let ax = to_x(a);
+        if ax >= rect.left() - 1.0 && ax <= rect.right() + 1.0 {
+            painter.line_segment(
+                [Pos2::new(ax, rect.top()), Pos2::new(ax, rect.bottom())],
+                Stroke::new(1.5_f32, loop_color_a),
+            );
+            painter.text(
+                Pos2::new(ax + 2.0, rect.top() + 2.0),
+                egui::Align2::LEFT_TOP,
+                "A",
+                egui::FontId::proportional(10.0),
+                loop_color_a,
+            );
+        }
+    }
+    if let Some(b) = state.loop_b {
+        let bx = to_x(b);
+        if bx >= rect.left() - 1.0 && bx <= rect.right() + 1.0 {
+            painter.line_segment(
+                [Pos2::new(bx, rect.top()), Pos2::new(bx, rect.bottom())],
+                Stroke::new(1.5_f32, loop_color_b),
+            );
+            painter.text(
+                Pos2::new(bx + 2.0, rect.top() + 2.0),
+                egui::Align2::LEFT_TOP,
+                "B",
+                egui::FontId::proportional(10.0),
+                loop_color_b,
+            );
+        }
+    }
+    // 循环区间淡色遮罩
+    if state.loop_enabled {
+        if let (Some(a), Some(b)) = (state.loop_a, state.loop_b) {
+            let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+            let x0 = to_x(lo).clamp(rect.left(), rect.right());
+            let x1 = to_x(hi).clamp(rect.left(), rect.right());
+            if x1 > x0 {
+                painter.rect_filled(
+                    Rect::from_min_max(
+                        Pos2::new(x0, rect.top()),
+                        Pos2::new(x1, rect.bottom()),
+                    ),
+                    0.0,
+                    Color32::from_rgba_unmultiplied(0x1B, 0x6E, 0xF3, 28),
+                );
+            }
+        }
     }
 
     painter.text(
