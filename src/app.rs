@@ -133,6 +133,7 @@ impl eframe::App for BassoxideApp {
                     }
                     menu_bar::MenuAction::LightTheme => self.state.set_light_theme(true),
                     menu_bar::MenuAction::DarkTheme => self.state.set_light_theme(false),
+                    menu_bar::MenuAction::OpenSettings => self.state.settings_open = true,
                     menu_bar::MenuAction::None => {}
                 }
             });
@@ -188,5 +189,12 @@ impl eframe::App for BassoxideApp {
             .show(ctx, |ui| {
                 crate::ui::score_view::score_view(ui, &mut self.state);
             });
+
+        // 设置页面
+        if self.state.settings_open {
+            if crate::ui::settings::settings_window(ctx, &mut self.state) {
+                self.state.settings_open = false;
+            }
+        }
     }
 }

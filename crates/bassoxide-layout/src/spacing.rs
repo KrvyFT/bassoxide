@@ -35,6 +35,8 @@ pub struct LayoutSettings {
     pub page_margin: f32,
     /// 六线谱下方符杆(节奏)区域高度 (px)
     pub rhythm_height: f32,
+    /// 每行小节数：0 = 按页宽自动换行，否则强制每行 N 小节
+    pub measures_per_line: u8,
 }
 
 impl Default for LayoutSettings {
@@ -51,20 +53,26 @@ impl Default for LayoutSettings {
             available_width: 1200.0,
             tab_font_size: 12.0,
             clef_width: 30.0,
-            time_sig_width: 25.0,
+            time_sig_width: 28.0,
             // A4 纵向 210×297mm，约 96dpi 下 794×1123 px
             page_width: 794.0,
             page_height: 1123.0,
             page_margin: 48.0,
             rhythm_height: 26.0,
+            measures_per_line: 0,
         }
     }
 }
 
 impl LayoutSettings {
-    /// 六线谱总高度 (6弦)
+    /// 六线谱总高度
     pub fn tab_staff_height(&self, string_count: usize) -> f32 {
         self.tab_string_spacing * (string_count.saturating_sub(1)) as f32
+    }
+
+    /// 五线谱总高度（5 线 = 4 个间距）
+    pub fn standard_staff_height(&self) -> f32 {
+        self.staff_line_spacing * 4.0
     }
 
     /// A4 页面可用内容宽度

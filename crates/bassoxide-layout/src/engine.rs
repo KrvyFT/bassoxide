@@ -187,14 +187,27 @@ impl LayoutEngine {
         widths
     }
 
-    /// 将小节分配到行：按 A4 页面可用宽度自动换行
+    /// 将小节分配到行：按页宽自动换行，或按固定每行小节数
     fn break_into_systems(&self, widths: &[f32]) -> Vec<(usize, usize)> {
         if widths.is_empty() {
             return vec![];
         }
 
+        let fixed = self.settings.measures_per_line as usize;
+        if fixed > 0 {
+            let mut ranges = Vec::new();
+            let mut start = 0usize;
+            while start < widths.len() {
+                let end = (start + fixed).min(widths.len());
+                ranges.push((start, end));
+                start = end;
+            }
+            return ranges;
+        }
+
         let preamble = self.settings.clef_width + self.settings.time_sig_width;
-        let available = (self.settings.page_content_width() - preamble).max(self.settings.min_measure_width);
+        let available =
+            (self.settings.page_content_width() - preamble).max(self.settings.min_measure_width);
 
         let mut ranges = Vec::new();
         let mut start = 0usize;
@@ -231,7 +244,7 @@ impl LayoutEngine {
         let mut any = false;
 
         if display.show_standard {
-            let standard_height = 24.0;
+            let standard_height = s.standard_staff_height();
             staves.push(StaffLayout {
                 staff_type: StaffType::Standard,
                 track_index: selected,
@@ -258,22 +271,9 @@ impl LayoutEngine {
             any = true;
         }
 
-        if display.show_numbered {
-            let numbered_height = 20.0;
-            staves.push(StaffLayout {
-                staff_type: StaffType::Numbered,
-                track_index: selected,
-                string_count: 1,
-                y: staff_y,
-                height: numbered_height,
-            });
-            staff_y += numbered_height + s.track_gap;
-            any = true;
-        }
-
         // 兜底：至少显示五线谱，避免空白
         if !any {
-            let standard_height = 24.0;
+            let standard_height = s.standard_staff_height();
             staves.push(StaffLayout {
                 staff_type: StaffType::Standard,
                 track_index: selected,

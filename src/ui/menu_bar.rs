@@ -11,6 +11,7 @@ pub enum MenuAction {
     Quit,
     LightTheme,
     DarkTheme,
+    OpenSettings,
 }
 
 /// 绘制菜单栏
@@ -43,6 +44,11 @@ pub fn menu_bar(ui: &mut Ui, state: &AppState) -> MenuAction {
                 .clicked()
             {
                 action = MenuAction::DarkTheme;
+                ui.close_menu();
+            }
+            ui.separator();
+            if ui.button("设置...").clicked() {
+                action = MenuAction::OpenSettings;
                 ui.close_menu();
             }
         });

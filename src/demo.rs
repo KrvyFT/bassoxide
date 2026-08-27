@@ -60,7 +60,7 @@ pub fn build_demo_song() -> Song {
         });
     }
 
-    // 电吉他 — 六线 + 数字谱
+    // 电吉他 — 六线谱
     let mut guitar = Track {
         number: 1,
         name: "Electric Guitar".into(),
@@ -72,7 +72,6 @@ pub fn build_demo_song() -> Song {
             show_standard: false,
             show_tab: true,
             tab_strings: 6,
-            show_numbered: true,
         },
         ..Track::default()
     };
@@ -102,7 +101,6 @@ pub fn build_demo_song() -> Song {
             show_standard: false,
             show_tab: true,
             tab_strings: 4,
-            show_numbered: false,
         },
         ..Track::default()
     };
@@ -132,7 +130,6 @@ pub fn build_demo_song() -> Song {
             show_standard: true,
             show_tab: false,
             tab_strings: 6,
-            show_numbered: false,
         },
         ..Track::default()
     };
@@ -176,7 +173,6 @@ pub fn build_demo_song() -> Song {
             show_standard: true,
             show_tab: false,
             tab_strings: 6,
-            show_numbered: false,
         },
         tuning: Tuning {
             name: String::new(),

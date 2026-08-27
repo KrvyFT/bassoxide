@@ -13,6 +13,7 @@ fn main() -> eframe::Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
     let load_demo = args.iter().any(|a| a == "--demo");
+    let open_settings = args.iter().any(|a| a == "--settings");
     let startup_path = args
         .iter()
         .skip(1)
@@ -37,6 +38,9 @@ fn main() -> eframe::Result<()> {
                     .load_song(demo::build_demo_song(), Some("demo://material-you".into()));
             } else if let Some(path) = startup_path {
                 app.open_path(std::path::Path::new(&path));
+            }
+            if open_settings {
+                app.state.settings_open = true;
             }
             Ok(Box::new(app))
         }),

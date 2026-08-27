@@ -16,14 +16,37 @@ pub struct CursorPosition {
     pub string: usize,
 }
 
+/// 用户可调的谱面偏好（缩放前的基准值）
+#[derive(Debug, Clone)]
+pub struct ScorePrefs {
+    pub font_size: f32,
+    pub line_spacing: f32,
+    pub row_spacing: f32,
+    /// 0 = 自动
+    pub measures_per_line: u8,
+}
+
+impl Default for ScorePrefs {
+    fn default() -> Self {
+        Self {
+            font_size: 12.0,
+            line_spacing: 14.0,
+            row_spacing: 80.0,
+            measures_per_line: 0,
+        }
+    }
+}
+
 /// 全局应用状态
 pub struct AppState {
     /// 当前加载的乐谱
     pub song: Option<Song>,
     /// 布局结果（排版缓存）
     pub layout: Option<LayoutResult>,
-    /// 布局设置
+    /// 布局设置（含缩放后的实际值）
     pub layout_settings: LayoutSettings,
+    /// 谱面偏好（设置页编辑的基准值）
+    pub score_prefs: ScorePrefs,
     /// 渲染主题
     pub theme: Theme,
     /// 当前光标位置
@@ -46,6 +69,8 @@ pub struct AppState {
     pub is_light_theme: bool,
     /// 打开的轨道配置弹窗（轨道索引）
     pub track_config_popup: Option<usize>,
+    /// 设置页面是否打开
+    pub settings_open: bool,
     /// 主题是否已应用到 egui
     pub theme_dirty: bool,
 }
@@ -62,11 +87,12 @@ impl Default for AppState {
 
         let is_light_theme = true;
         let palette = MaterialPalette::for_mode(is_light_theme);
-
-        Self {
+        let score_prefs = ScorePrefs::default();
+        let mut state = Self {
             song: None,
             layout: None,
             layout_settings: LayoutSettings::default(),
+            score_prefs,
             theme: palette.to_score_theme(),
             cursor: CursorPosition::default(),
             scroll_y: 0.0,
@@ -78,30 +104,44 @@ impl Default for AppState {
             selected_track: 0,
             is_light_theme,
             track_config_popup: None,
+            settings_open: false,
             theme_dirty: true,
-        }
+        };
+        state.apply_score_prefs();
+        state
     }
 }
 
 impl AppState {
-    pub fn update_zoom(&mut self) {
-        // 重置为基础值并乘以上缩放系数
-        let base = bassoxide_layout::spacing::LayoutSettings::default();
+    /// 将谱面偏好 × 缩放 写入 layout_settings 并标记重排
+    pub fn apply_score_prefs(&mut self) {
         let z = self.zoom_factor;
+        let p = &self.score_prefs;
+        let base = LayoutSettings::default();
+
+        self.layout_settings.tab_font_size = p.font_size * z;
+        self.layout_settings.tab_string_spacing = p.line_spacing * z;
+        self.layout_settings.staff_line_spacing = (p.line_spacing * 0.75).max(6.0) * z;
+        self.layout_settings.system_gap = p.row_spacing * z;
+        self.layout_settings.measures_per_line = p.measures_per_line;
+
         self.layout_settings.margin_top = base.margin_top * z;
         self.layout_settings.margin_left = base.margin_left * z;
-        self.layout_settings.system_gap = base.system_gap * z;
         self.layout_settings.track_gap = base.track_gap * z;
         self.layout_settings.min_measure_width = base.min_measure_width * z;
         self.layout_settings.min_beat_spacing = base.min_beat_spacing * z;
-        self.layout_settings.tab_string_spacing = base.tab_string_spacing * z;
-        self.layout_settings.tab_font_size = base.tab_font_size * z;
         self.layout_settings.clef_width = base.clef_width * z;
-        self.layout_settings.time_sig_width = base.time_sig_width * z;
+        self.layout_settings.time_sig_width = (base.time_sig_width * z).max(24.0);
         self.layout_settings.page_width = base.page_width * z;
         self.layout_settings.page_height = base.page_height * z;
         self.layout_settings.page_margin = base.page_margin * z;
         self.layout_settings.rhythm_height = base.rhythm_height * z;
+
+        self.needs_relayout = true;
+    }
+
+    pub fn update_zoom(&mut self) {
+        self.apply_score_prefs();
     }
 
     /// 切换浅色/深色主题

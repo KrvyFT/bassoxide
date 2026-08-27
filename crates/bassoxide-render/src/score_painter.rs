@@ -74,28 +74,27 @@ impl<'a> ScorePainter<'a> {
                             self.theme,
                         );
                     }
-                    bassoxide_layout::staff::StaffType::Numbered => {
-                        staff_render::draw_numbered_staff(
-                            painter, staff_x, staff_y, system_width, self.settings, self.theme,
-                        );
-                    }
                     _ => {}
                 }
 
-                // 绘制该行开头的拍号
+                // 绘制该行开头的拍号（五线谱与 Tab 均显示）
                 if let Some(first_mp) = system.measure_positions.first() {
                     if let Some(master_bar) = song.master_bar(first_mp.measure_index) {
                         let ts = &master_bar.time_signature;
                         let denom_num = note_value_to_num(ts.denominator);
 
-                        if staff.staff_type == bassoxide_layout::staff::StaffType::Tablature {
+                        if matches!(
+                            staff.staff_type,
+                            bassoxide_layout::staff::StaffType::Tablature
+                                | bassoxide_layout::staff::StaffType::Standard
+                        ) {
                             staff_render::draw_time_signature(
                                 painter,
-                                staff_x + self.settings.clef_width + 12.0,
+                                staff_x + self.settings.clef_width + 14.0,
                                 staff_y,
                                 ts.numerator,
                                 denom_num,
-                                staff.string_count,
+                                staff.height,
                                 self.settings,
                                 self.theme,
                             );
@@ -203,7 +202,7 @@ impl<'a> ScorePainter<'a> {
         match staff.staff_type {
             bassoxide_layout::staff::StaffType::Standard => {
                 note_render::draw_standard_note(
-                    painter, note, beat_x, staff_y, &track.tuning, self.theme,
+                    painter, note, beat_x, staff_y, &track.tuning, self.settings, self.theme,
                 );
             }
             bassoxide_layout::staff::StaffType::Tablature => {
@@ -238,11 +237,6 @@ impl<'a> ScorePainter<'a> {
                         _ => {}
                     }
                 }
-            }
-            bassoxide_layout::staff::StaffType::Numbered => {
-                note_render::draw_numbered_note(
-                    painter, note, beat_x, staff_y, &track.tuning, self.theme, false,
-                );
             }
             _ => {}
         }
