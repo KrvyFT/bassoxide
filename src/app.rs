@@ -106,6 +106,7 @@ impl BassoxideApp {
                     track.analysis.measure_times.len()
                 );
                 self.state.audio_track = Some(track);
+                self.state.sync_playback_tools_to_player();
             }
             Err(e) => {
                 self.state.status_message = format!("音频加载失败: {e}");
@@ -254,8 +255,28 @@ impl eframe::App for BassoxideApp {
             && ctx.input(|i| i.key_pressed(egui::Key::Space))
             && self.state.audio_track.is_some()
         {
+            self.state.sync_playback_tools_to_player();
             if let Some(player) = &self.state.audio_player {
                 player.toggle_play_pause();
+            }
+        }
+
+        // 播放工具快捷键：M 节拍器、L 循环、[ ] 设 A/B
+        if !ctx.wants_keyboard_input()
+            && !self.state.tuning_editor_open
+            && !self.state.settings_open
+        {
+            if ctx.input(|i| i.key_pressed(egui::Key::M) && !i.modifiers.command) {
+                self.state.toggle_metronome();
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::L) && !i.modifiers.command) {
+                self.state.toggle_loop_enabled();
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::OpenBracket) && !i.modifiers.command) {
+                self.state.set_loop_a_here();
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::CloseBracket) && !i.modifiers.command) {
+                self.state.set_loop_b_here();
             }
         }
 

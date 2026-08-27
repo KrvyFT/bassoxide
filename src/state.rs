@@ -94,6 +94,14 @@ pub struct AppState {
     pub tuning_editor_open: bool,
     /// 主题是否已应用到 egui
     pub theme_dirty: bool,
+    /// 练习变速（0.5–1.5）
+    pub playback_rate: f32,
+    /// A-B 循环点（谱面秒）
+    pub loop_a: Option<f64>,
+    pub loop_b: Option<f64>,
+    pub loop_enabled: bool,
+    /// 节拍器开关
+    pub metronome_enabled: bool,
     /// 品格数字输入缓冲
     pub fret_input: crate::edit::FretInputBuffer,
 }
@@ -130,6 +138,11 @@ impl Default for AppState {
             settings_open: false,
             tuning_editor_open: false,
             theme_dirty: true,
+            playback_rate: 1.0,
+            loop_a: None,
+            loop_b: None,
+            loop_enabled: false,
+            metronome_enabled: false,
             fret_input: crate::edit::FretInputBuffer::default(),
         };
         state.apply_score_prefs();
@@ -272,6 +285,87 @@ impl AppState {
         self.needs_relayout = true;
         self.cursor = CursorPosition::default();
         self.scroll_y = 0.0;
+        self.sync_playback_tools_to_player();
+    }
+
+    /// 把变速 / 循环 / 节拍器调度同步到 AudioPlayer
+    pub fn sync_playback_tools_to_player(&self) {
+        let Some(player) = &self.audio_player else {
+            return;
+        };
+        player.set_playback_rate(f64::from(self.playback_rate));
+        player.set_metronome(self.metronome_enabled);
+        let (a, b, en) = match (self.loop_a, self.loop_b) {
+            (Some(a), Some(b)) if a < b => (a, b, self.loop_enabled),
+            (Some(a), Some(b)) if b < a => (b, a, self.loop_enabled),
+            _ => (0.0, 0.0, false),
+        };
+        player.set_loop(a, b, en);
+        if let Some(song) = &self.song {
+            let tl = bassoxide_audio::score_timeline(song);
+            player.set_metronome_schedule(tl.beat_times, tl.measure_times);
+        } else {
+            player.set_metronome_schedule(Vec::new(), Vec::new());
+        }
+    }
+
+    pub fn set_loop_a_here(&mut self) {
+        let t = self
+            .audio_player
+            .as_ref()
+            .map(|p| p.score_position_secs())
+            .unwrap_or(0.0);
+        self.loop_a = Some(t);
+        self.status_message = format!("循环 A = {t:.2}s");
+        self.sync_playback_tools_to_player();
+    }
+
+    pub fn set_loop_b_here(&mut self) {
+        let t = self
+            .audio_player
+            .as_ref()
+            .map(|p| p.score_position_secs())
+            .unwrap_or(0.0);
+        self.loop_b = Some(t);
+        self.status_message = format!("循环 B = {t:.2}s");
+        self.sync_playback_tools_to_player();
+    }
+
+    pub fn clear_loop_points(&mut self) {
+        self.loop_a = None;
+        self.loop_b = None;
+        self.loop_enabled = false;
+        self.status_message = "已清除 A-B 循环".into();
+        self.sync_playback_tools_to_player();
+    }
+
+    pub fn toggle_loop_enabled(&mut self) {
+        if self.loop_a.is_none() || self.loop_b.is_none() {
+            self.status_message = "请先设置 A / B 点".into();
+            return;
+        }
+        self.loop_enabled = !self.loop_enabled;
+        self.status_message = if self.loop_enabled {
+            "A-B 循环：开".into()
+        } else {
+            "A-B 循环：关".into()
+        };
+        self.sync_playback_tools_to_player();
+    }
+
+    pub fn toggle_metronome(&mut self) {
+        self.metronome_enabled = !self.metronome_enabled;
+        self.status_message = if self.metronome_enabled {
+            "节拍器：开".into()
+        } else {
+            "节拍器：关".into()
+        };
+        self.sync_playback_tools_to_player();
+    }
+
+    pub fn set_playback_rate_ui(&mut self, rate: f32) {
+        self.playback_rate = rate.clamp(0.5, 1.5);
+        self.sync_playback_tools_to_player();
     }
 
     /// 执行排版（仅在需要时调用）
@@ -299,6 +393,7 @@ impl AppState {
     pub fn seek_score_secs(&mut self, secs: f64, start_playback: bool) {
         let secs = secs.max(0.0);
         if let Some(player) = &self.audio_player {
+            self.sync_playback_tools_to_player();
             player.seek_score_secs(secs);
             if start_playback && player.status() != bassoxide_audio::PlaybackStatus::Playing {
                 player.play();
