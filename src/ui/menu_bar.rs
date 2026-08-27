@@ -8,6 +8,7 @@ use crate::state::AppState;
 pub enum MenuAction {
     None,
     OpenFile,
+    AddAudioTrack,
     Quit,
     LightTheme,
     DarkTheme,
@@ -20,8 +21,12 @@ pub fn menu_bar(ui: &mut Ui, state: &AppState) -> MenuAction {
 
     egui::menu::bar(ui, |ui| {
         ui.menu_button("文件", |ui| {
-            if ui.button("打开... (Ctrl+O)").clicked() {
+            if ui.button("打开乐谱... (Ctrl+O)").clicked() {
                 action = MenuAction::OpenFile;
+                ui.close_menu();
+            }
+            if ui.button("添加音频轨...").clicked() {
+                action = MenuAction::AddAudioTrack;
                 ui.close_menu();
             }
             ui.separator();

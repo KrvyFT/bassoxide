@@ -78,6 +78,41 @@ impl BassoxideApp {
         }
     }
 
+    fn add_audio_track(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter(
+                "Audio",
+                &["wav", "flac", "mp3", "ogg", "m4a", "aac", "aiff", "aif"],
+            )
+            .add_filter("All", &["*"])
+            .pick_file()
+        {
+            self.load_audio_path(&path);
+        }
+    }
+
+    pub fn load_audio_path(&mut self, path: &std::path::Path) {
+        match crate::ui::audio_track::AudioTrack::load(path, self.state.song.as_ref()) {
+            Ok(track) => {
+                if let Some(player) = &self.state.audio_player {
+                    player.set_audio(track.samples.clone(), track.sample_rate);
+                    player.set_sync_offset(track.sync_offset_secs);
+                }
+                self.state.status_message = format!(
+                    "已加载音频: {} | {:.1}s | 检测 {:.1} BPM | {} 小节线",
+                    track.path,
+                    track.duration_secs,
+                    track.analysis.bpm,
+                    track.analysis.measure_times.len()
+                );
+                self.state.audio_track = Some(track);
+            }
+            Err(e) => {
+                self.state.status_message = format!("音频加载失败: {e}");
+            }
+        }
+    }
+
     /// 从路径加载乐谱
     pub fn open_path(&mut self, path: &std::path::Path) {
         let path_str = path.display().to_string();
@@ -128,6 +163,7 @@ impl eframe::App for BassoxideApp {
                 let action = menu_bar::menu_bar(ui, &self.state);
                 match action {
                     menu_bar::MenuAction::OpenFile => self.open_file(),
+                    menu_bar::MenuAction::AddAudioTrack => self.add_audio_track(),
                     menu_bar::MenuAction::Quit => {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
@@ -160,10 +196,10 @@ impl eframe::App for BassoxideApp {
                 transport::transport_bar(ui, &mut self.state);
             });
 
-        // 底部：混音台 + 状态栏作为整体
+        // 底部：轨道面板
         egui::TopBottomPanel::bottom("mixer_bottom")
             .resizable(true)
-            .default_height(220.0)
+            .default_height(160.0)
             .frame(
                 egui::Frame::side_top_panel(&ctx.style())
                     .fill(palette.surface_container)
@@ -178,6 +214,35 @@ impl eframe::App for BassoxideApp {
             .show(ctx, |ui| {
                 crate::ui::timeline::timeline_panel(ui, &mut self.state);
             });
+
+        // 音频同步轨（叠在轨道面板上方）
+        egui::TopBottomPanel::bottom("audio_sync")
+            .resizable(true)
+            .default_height(150.0)
+            .frame(
+                egui::Frame::side_top_panel(&ctx.style())
+                    .fill(palette.surface_container)
+                    .inner_margin(egui::Margin::symmetric(12, 8))
+                    .corner_radius(egui::CornerRadius {
+                        nw: 12,
+                        ne: 12,
+                        sw: 0,
+                        se: 0,
+                    }),
+            )
+            .show(ctx, |ui| {
+                crate::ui::audio_track::audio_track_panel(ui, &mut self.state);
+            });
+
+        // 播放中持续刷新 UI（播放头）
+        if self
+            .state
+            .audio_player
+            .as_ref()
+            .is_some_and(|p| p.status() == bassoxide_audio::PlaybackStatus::Playing)
+        {
+            ctx.request_repaint();
+        }
 
         // 主内容区：Material You surface 衬底
         egui::CentralPanel::default()

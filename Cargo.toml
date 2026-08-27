@@ -36,7 +36,6 @@ egui = "0.31"
 
 # 音频
 cpal = "0.15"
-rustysynth = "1"
 
 # 日志
 tracing = "0.1"

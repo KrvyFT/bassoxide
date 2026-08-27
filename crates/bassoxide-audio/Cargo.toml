@@ -2,12 +2,11 @@
 name = "bassoxide-audio"
 version.workspace = true
 edition.workspace = true
-description = "Audio engine with SoundFont synthesis and effects"
+description = "Audio file decoding, beat detection, waveform peaks, and PCM playback"
 
 [dependencies]
 bassoxide-core.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-cpal = "0.15"
-rustysynth = "1.3"
-crossbeam-channel = "0.5" # 用于主线程和音频线程通信
+cpal.workspace = true
+symphonia = { version = "0.5", features = ["all"] }

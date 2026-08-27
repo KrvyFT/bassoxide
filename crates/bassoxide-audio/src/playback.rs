@@ -1,42 +1,14 @@
-//! 音频回放控制与 cpal 接口
+//! PCM 文件回放（非 MIDI）。按「谱面时间」推进，用 sync_offset 对齐音频。
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Stream, StreamConfig};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use tracing::{error, info};
+
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::{SampleFormat, Stream, StreamConfig};
 
 use crate::error::{AudioError, Result};
-use crate::synth::Synth;
-use bassoxide_core::song::Song;
-
-/// MIDI 事件
-#[derive(Debug, Clone)]
-pub enum MidiEvent {
-    NoteOn { tick: u32, channel: i32, key: i32, velocity: i32 },
-    NoteOff { tick: u32, channel: i32, key: i32 },
-    ProgramChange { tick: u32, channel: i32, program: i32 },
-    BankSelect { tick: u32, channel: i32, bank: i32 },
-}
-
-impl MidiEvent {
-    pub fn tick(&self) -> u32 {
-        match self {
-            MidiEvent::NoteOn { tick, .. } => *tick,
-            MidiEvent::NoteOff { tick, .. } => *tick,
-            MidiEvent::ProgramChange { tick, .. } => *tick,
-            MidiEvent::BankSelect { tick, .. } => *tick,
-        }
-    }
-}
-
-/// 播放器引擎
-pub struct AudioEngine {
-    _stream: Option<Stream>,
-    pub synth: Arc<Synth>,
-    play_state: Arc<Mutex<PlayState>>,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaybackStatus {
@@ -45,328 +17,254 @@ pub enum PlaybackStatus {
     Paused,
 }
 
-struct PlayState {
-    status: PlaybackStatus,
-    current_tick: u32,
-    bpm: u16,
-    events: Vec<MidiEvent>,
-    event_idx: usize,
+struct CallbackState {
+    samples: Mutex<Arc<Vec<f32>>>,
+    source_sr: Mutex<u32>,
+    score_secs: AtomicU64,
+    sync_offset: AtomicU64,
+    playing: AtomicBool,
 }
 
-impl AudioEngine {
+/// 音频轨播放器
+pub struct AudioPlayer {
+    state: Arc<CallbackState>,
+    _stream: Option<Stream>,
+    status: Mutex<PlaybackStatus>,
+    paused_score: Mutex<f64>,
+}
+
+impl AudioPlayer {
     pub fn new() -> Result<Self> {
-        match Self::new_with_device() {
-            Ok(engine) => Ok(engine),
-            Err(device_err) => {
-                // 无音频设备时仍加载 SoundFont，保证混音台可枚举音色
-                tracing::warn!("Audio device unavailable ({device_err}); starting synth-only engine");
-                Self::new_synth_only(44100)
+        match Self::try_new_with_device() {
+            Ok(p) => Ok(p),
+            Err(e) => {
+                tracing::warn!("音频设备不可用 ({e})；使用软件时钟播放器");
+                Ok(Self::new_silent())
             }
         }
     }
 
-    fn new_synth_only(sample_rate: i32) -> Result<Self> {
-        let synth = Arc::new(Synth::new(sample_rate)?);
-        let play_state = Arc::new(Mutex::new(PlayState {
-            status: PlaybackStatus::Stopped,
-            current_tick: 0,
-            bpm: 120,
-            events: Vec::new(),
-            event_idx: 0,
-        }));
-        Self::start_sequencer(play_state.clone(), synth.clone());
-        Ok(Self {
-            _stream: None,
-            synth,
-            play_state,
-        })
-    }
-
-    fn new_with_device() -> Result<Self> {
-        let host = cpal::default_host();
-        let device = host.default_output_device()
-            .ok_or_else(|| AudioError::DeviceError("No output device available".to_string()))?;
-            
-        let mut supported_configs_range = device.supported_output_configs()
-            .map_err(|e| AudioError::DeviceError(format!("Error while querying configs: {e}")))?;
-            
-        let config_range = supported_configs_range.next()
-            .ok_or_else(|| AudioError::DeviceError("No supported config".to_string()))?;
-            
-        let target_sr = cpal::SampleRate(44100);
-        let config = if config_range.min_sample_rate() <= target_sr && target_sr <= config_range.max_sample_rate() {
-            config_range.with_sample_rate(target_sr)
-        } else {
-            let max_allowed = config_range.max_sample_rate().0.min(192000);
-            config_range.with_sample_rate(cpal::SampleRate(max_allowed))
-        }.config();
-            
-        let sample_rate = config.sample_rate.0 as i32;
-        let synth = Arc::new(Synth::new(sample_rate)?);
-        
-        let play_state = Arc::new(Mutex::new(PlayState {
-            status: PlaybackStatus::Stopped,
-            current_tick: 0,
-            bpm: 120,
-            events: Vec::new(),
-            event_idx: 0,
-        }));
-
-        let stream = Self::start_stream(&device, &config, synth.clone())?;
-        stream.play().map_err(|e| AudioError::DeviceError(format!("Failed to play stream: {e}")))?;
-
-        // 启动音序器后台线程
-        Self::start_sequencer(play_state.clone(), synth.clone());
-
-        Ok(Self {
-            _stream: Some(stream),
-            synth,
-            play_state,
-        })
-    }
-    pub fn load_soundfont(&self, path: &str) -> Result<()> {
-        self.synth.load_soundfont(path)
-    }
-
-    pub fn get_presets(&self) -> Vec<(i32, i32, String)> {
-        self.synth.get_presets()
-    }
-
-    fn start_stream(
-        device: &cpal::Device,
-        config: &StreamConfig,
-        synth: Arc<Synth>,
-    ) -> Result<Stream> {
-        let channels = config.channels as usize;
-        let mut left_buf = vec![0.0f32; 1024];
-        let mut right_buf = vec![0.0f32; 1024];
-
-        let err_fn = |err| error!("Audio stream error: {}", err);
-
-        let stream = device.build_output_stream(
-            config,
-            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                let frame_count = data.len() / channels;
-                if left_buf.len() < frame_count {
-                    left_buf.resize(frame_count, 0.0);
-                    right_buf.resize(frame_count, 0.0);
-                }
-                
-                synth.render(&mut left_buf[..frame_count], &mut right_buf[..frame_count]);
-                
-                for (i, frame) in data.chunks_mut(channels).enumerate() {
-                    frame[0] = left_buf[i];
-                    if channels > 1 {
-                        frame[1] = right_buf[i];
-                    }
-                }
-            },
-            err_fn,
-            None,
-        ).map_err(|e| AudioError::DeviceError(format!("Failed to build stream: {e}")))?;
-
-        Ok(stream)
-    }
-    
-    fn compile_song(song: &Song) -> Vec<MidiEvent> {
-        let mut events = Vec::new();
-        let has_solo = song.tracks.iter().any(|t| t.is_solo);
-        
-        for (track_idx, track) in song.tracks.iter().enumerate() {
-            if has_solo && !track.is_solo {
-                continue;
-            }
-            if !has_solo && track.is_muted {
-                continue;
-            }
-            let channel = Self::synth_channel(track, track_idx);
-            
-            // 为该轨道压入初始音色切换事件（包含 Bank 和 Program）
-            events.push(MidiEvent::BankSelect {
-                tick: 0,
-                channel,
-                bank: track.midi_bank as i32,
-            });
-            events.push(MidiEvent::ProgramChange {
-                tick: 0,
-                channel,
-                program: track.midi_program as i32,
-            });
-            
-            let mut current_tick = 0;
-            
-            for (m_idx, measure) in track.measures.iter().enumerate() {
-                let mut measure_tick = 0;
-                
-                // 暂时只处理 Voice 0
-                for beat in &measure.voices[0].beats {
-                    if !beat.is_empty() {
-                        for note in &beat.notes {
-                            if note.is_dead() { continue; }
-                            
-                            // Note On
-                            events.push(MidiEvent::NoteOn {
-                                tick: current_tick + measure_tick,
-                                channel,
-                                key: note.midi_note as i32,
-                                velocity: note.velocity as i32,
-                            });
-                            
-                            // Note Off
-                            events.push(MidiEvent::NoteOff {
-                                tick: current_tick + measure_tick + beat.ticks(),
-                                channel,
-                                key: note.midi_note as i32,
-                            });
-                        }
-                    }
-                    measure_tick += beat.ticks();
-                }
-                
-                // 小节长度，获取拍号
-                if let Some(master) = song.master_bar(m_idx) {
-                    current_tick += master.time_signature.measure_ticks();
-                } else {
-                    current_tick += 960 * 4; // 降级 4/4
-                }
-            }
-        }
-        
-        events.sort_by_key(|e| e.tick());
-        events
-    }
-
-    fn synth_channel(track: &bassoxide_core::track::Track, track_idx: usize) -> i32 {
-        if track.is_percussion {
-            return i32::from(bassoxide_core::midi::PERCUSSION_CHANNEL);
-        }
-        // 每条旋律轨独立通道，避开 GM 鼓通道 9；音色号仍来自文件。
-        let mut ch = (track_idx as i32) % 15;
-        if ch >= i32::from(bassoxide_core::midi::PERCUSSION_CHANNEL) {
-            ch += 1;
-        }
-        ch
-    }
-    
-    /// 启动后台 sequencer 线程
-    fn start_sequencer(state: Arc<Mutex<PlayState>>, synth: Arc<Synth>) {
-        thread::spawn(move || {
-            let mut last_time = Instant::now();
-            
-            loop {
-                thread::sleep(Duration::from_millis(10));
-                
-                let mut st = state.lock().unwrap();
-                if st.status != PlaybackStatus::Playing {
-                    last_time = Instant::now();
-                    continue;
-                }
-                
-                // 计算流逝的 tick (假设 ppq=960)
-                let now = Instant::now();
-                let elapsed = now.duration_since(last_time);
-                last_time = now;
-                
-                let bps = st.bpm as f32 / 60.0;
-                let ticks_per_sec = bps * 960.0;
-                let delta_ticks = (elapsed.as_secs_f32() * ticks_per_sec) as u32;
-                
-                st.current_tick += delta_ticks;
-                let current = st.current_tick;
-                
-                // 发送落入当前时间窗口的事件
-                while st.event_idx < st.events.len() && st.events[st.event_idx].tick() <= current {
-                    match &st.events[st.event_idx] {
-                        MidiEvent::NoteOn { channel, key, velocity, .. } => {
-                            synth.note_on(*channel, *key, *velocity);
-                        }
-                        MidiEvent::NoteOff { channel, key, .. } => {
-                            synth.note_off(*channel, *key);
-                        }
-                        MidiEvent::BankSelect { channel, bank, .. } => {
-                            tracing::info!("Sending BankSelect: channel={}, bank={}", channel, bank);
-                            if let Ok(mut s) = synth.synth.lock() {
-                                s.process_midi_message(*channel, 0xB0, 0x00, *bank);
-                            }
-                        }
-                        MidiEvent::ProgramChange { channel, program, .. } => {
-                            tracing::info!("Sending ProgramChange: channel={}, program={}", channel, program);
-                            synth.program_change(*channel, *program);
-                        }
-                    }
-                    st.event_idx += 1;
-                }
-                
-                // 播放结束
-                if st.event_idx >= st.events.len() {
-                    st.status = PlaybackStatus::Stopped;
-                    st.current_tick = 0;
-                    st.event_idx = 0;
-                }
-            }
+    fn new_silent() -> Self {
+        let state = Arc::new(CallbackState {
+            samples: Mutex::new(Arc::new(Vec::new())),
+            source_sr: Mutex::new(44100),
+            score_secs: AtomicU64::new(0f64.to_bits()),
+            sync_offset: AtomicU64::new(0f64.to_bits()),
+            playing: AtomicBool::new(false),
         });
+        start_soft_clock(state.clone());
+        Self {
+            state,
+            _stream: None,
+            status: Mutex::new(PlaybackStatus::Stopped),
+            paused_score: Mutex::new(0.0),
+        }
     }
 
-    pub fn play(&self, song: &Song) {
-        let mut state = self.play_state.lock().unwrap();
-        if state.status == PlaybackStatus::Stopped {
-            state.events = Self::compile_song(song);
-            state.bpm = song.tempo;
-            state.current_tick = 0;
-            state.event_idx = 0;
-        }
-        state.status = PlaybackStatus::Playing;
-    }
-    
-    pub fn pause(&self) {
-        let mut state = self.play_state.lock().unwrap();
-        state.status = PlaybackStatus::Paused;
-        self.synth.reset();
-    }
-    
-    pub fn stop(&self) {
-        let mut state = self.play_state.lock().unwrap();
-        state.status = PlaybackStatus::Stopped;
-        state.current_tick = 0;
-        self.synth.reset();
-    }
-    
-    pub fn reload_song(&self, song: &Song) {
-        let mut state = self.play_state.lock().unwrap();
-        let was_playing = state.status == PlaybackStatus::Playing;
-        
-        state.events = Self::compile_song(song);
-        
-        // 当切换独奏静音时，如果当前正在播放，需要让 event_idx 移动到 current_tick 处
-        if was_playing {
-            self.synth.reset();
-            let cur = state.current_tick;
-            
-            // 将所有在当前时间点之前的配置事件立即发出，确保重置后的合成器能恢复正确的音色
-            for e in &state.events {
-                if e.tick() > cur {
-                    break;
-                }
-                match e {
-                    MidiEvent::BankSelect { channel, bank, .. } => {
-                        if let Ok(mut s) = self.synth.synth.lock() {
-                            s.process_midi_message(*channel, 0xB0, 0x00, *bank);
+    fn try_new_with_device() -> Result<Self> {
+        let host = cpal::default_host();
+        let device = host
+            .default_output_device()
+            .ok_or_else(|| AudioError::DeviceError("无输出设备".into()))?;
+        let config = device
+            .default_output_config()
+            .map_err(|e| AudioError::DeviceError(e.to_string()))?;
+        let sample_format = config.sample_format();
+        let stream_config: StreamConfig = config.into();
+        let device_sr = stream_config.sample_rate.0;
+        let channels = stream_config.channels as usize;
+
+        let state = Arc::new(CallbackState {
+            samples: Mutex::new(Arc::new(Vec::new())),
+            source_sr: Mutex::new(44100),
+            score_secs: AtomicU64::new(0f64.to_bits()),
+            sync_offset: AtomicU64::new(0f64.to_bits()),
+            playing: AtomicBool::new(false),
+        });
+
+        let state_cb = state.clone();
+        let err_fn = |e| tracing::error!("音频流错误: {e}");
+
+        let stream = match sample_format {
+            SampleFormat::F32 => device.build_output_stream(
+                &stream_config,
+                move |data: &mut [f32], _| fill_output(data, channels, device_sr, &state_cb),
+                err_fn,
+                None,
+            ),
+            SampleFormat::I16 => {
+                let state_cb = state.clone();
+                device.build_output_stream(
+                    &stream_config,
+                    move |data: &mut [i16], _| {
+                        let mut tmp = vec![0.0f32; data.len()];
+                        fill_output(&mut tmp, channels, device_sr, &state_cb);
+                        for (o, s) in data.iter_mut().zip(tmp.iter()) {
+                            *o = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
                         }
-                    }
-                    MidiEvent::ProgramChange { channel, program, .. } => {
-                        self.synth.program_change(*channel, *program);
-                    }
-                    _ => {} // NoteOn/NoteOff 不补发
+                    },
+                    err_fn,
+                    None,
+                )
+            }
+            other => {
+                return Err(AudioError::DeviceError(format!(
+                    "不支持的采样格式: {other:?}"
+                )));
+            }
+        }
+        .map_err(|e| AudioError::DeviceError(e.to_string()))?;
+
+        stream
+            .play()
+            .map_err(|e| AudioError::DeviceError(e.to_string()))?;
+
+        Ok(Self {
+            state,
+            _stream: Some(stream),
+            status: Mutex::new(PlaybackStatus::Stopped),
+            paused_score: Mutex::new(0.0),
+        })
+    }
+
+    pub fn set_audio(&self, samples: Arc<Vec<f32>>, sample_rate: u32) {
+        *self.state.samples.lock().unwrap() = samples;
+        *self.state.source_sr.lock().unwrap() = sample_rate.max(1);
+        self.stop();
+    }
+
+    pub fn clear_audio(&self) {
+        *self.state.samples.lock().unwrap() = Arc::new(Vec::new());
+        self.stop();
+    }
+
+    pub fn set_sync_offset(&self, offset_secs: f64) {
+        self.state
+            .sync_offset
+            .store(offset_secs.to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn sync_offset(&self) -> f64 {
+        f64::from_bits(self.state.sync_offset.load(Ordering::Relaxed))
+    }
+
+    pub fn status(&self) -> PlaybackStatus {
+        *self.status.lock().unwrap()
+    }
+
+    pub fn score_position_secs(&self) -> f64 {
+        f64::from_bits(self.state.score_secs.load(Ordering::Relaxed))
+    }
+
+    pub fn play(&self) {
+        let status = *self.status.lock().unwrap();
+        match status {
+            PlaybackStatus::Playing => {}
+            PlaybackStatus::Paused => {
+                let t = *self.paused_score.lock().unwrap();
+                self.state.score_secs.store(t.to_bits(), Ordering::Relaxed);
+                self.state.playing.store(true, Ordering::Relaxed);
+                *self.status.lock().unwrap() = PlaybackStatus::Playing;
+            }
+            PlaybackStatus::Stopped => {
+                self.state
+                    .score_secs
+                    .store(0f64.to_bits(), Ordering::Relaxed);
+                self.state.playing.store(true, Ordering::Relaxed);
+                *self.status.lock().unwrap() = PlaybackStatus::Playing;
+            }
+        }
+    }
+
+    pub fn pause(&self) {
+        if *self.status.lock().unwrap() == PlaybackStatus::Playing {
+            self.state.playing.store(false, Ordering::Relaxed);
+            *self.paused_score.lock().unwrap() = self.score_position_secs();
+            *self.status.lock().unwrap() = PlaybackStatus::Paused;
+        }
+    }
+
+    pub fn stop(&self) {
+        self.state.playing.store(false, Ordering::Relaxed);
+        self.state
+            .score_secs
+            .store(0f64.to_bits(), Ordering::Relaxed);
+        *self.paused_score.lock().unwrap() = 0.0;
+        *self.status.lock().unwrap() = PlaybackStatus::Stopped;
+    }
+
+    pub fn seek_score_secs(&self, secs: f64) {
+        let secs = secs.max(0.0);
+        self.state.score_secs.store(secs.to_bits(), Ordering::Relaxed);
+        *self.paused_score.lock().unwrap() = secs;
+    }
+}
+
+fn start_soft_clock(state: Arc<CallbackState>) {
+    thread::spawn(move || {
+        let mut last = Instant::now();
+        loop {
+            thread::sleep(Duration::from_millis(16));
+            if !state.playing.load(Ordering::Relaxed) {
+                last = Instant::now();
+                continue;
+            }
+            let now = Instant::now();
+            let dt = now.duration_since(last).as_secs_f64();
+            last = now;
+            let score = f64::from_bits(state.score_secs.load(Ordering::Relaxed)) + dt;
+            state.score_secs.store(score.to_bits(), Ordering::Relaxed);
+
+            let samples = state.samples.lock().unwrap().clone();
+            let sr = *state.source_sr.lock().unwrap();
+            if !samples.is_empty() && sr > 0 {
+                let sync = f64::from_bits(state.sync_offset.load(Ordering::Relaxed));
+                let audio_t = score - sync;
+                let dur = samples.len() as f64 / f64::from(sr);
+                if audio_t >= dur {
+                    state.playing.store(false, Ordering::Relaxed);
                 }
             }
-            
-            state.event_idx = state.events.iter().position(|e| e.tick() > cur).unwrap_or(state.events.len());
-        } else {
-            state.event_idx = 0;
         }
+    });
+}
+
+fn fill_output(data: &mut [f32], channels: usize, device_sr: u32, state: &CallbackState) {
+    data.fill(0.0);
+    if !state.playing.load(Ordering::Relaxed) {
+        return;
     }
-    
-    pub fn status(&self) -> PlaybackStatus {
-        self.play_state.lock().unwrap().status
+
+    let samples = state.samples.lock().unwrap().clone();
+    let source_sr = *state.source_sr.lock().unwrap();
+    if samples.is_empty() || source_sr == 0 || device_sr == 0 {
+        return;
     }
+
+    let sync = f64::from_bits(state.sync_offset.load(Ordering::Relaxed));
+    let mut score = f64::from_bits(state.score_secs.load(Ordering::Relaxed));
+    let dt = 1.0 / f64::from(device_sr);
+    let duration = samples.len() as f64 / f64::from(source_sr);
+
+    for frame in data.chunks_mut(channels) {
+        let audio_t = score - sync;
+        let mut sample = 0.0_f32;
+        if audio_t >= 0.0 && audio_t < duration {
+            let idx_f = audio_t * f64::from(source_sr);
+            let idx = idx_f.floor() as usize;
+            if idx + 1 < samples.len() {
+                let frac = (idx_f - idx as f64) as f32;
+                sample = samples[idx] * (1.0 - frac) + samples[idx + 1] * frac;
+            } else if idx < samples.len() {
+                sample = samples[idx];
+            }
+        } else if audio_t >= duration {
+            state.playing.store(false, Ordering::Relaxed);
+        }
+        for ch in frame.iter_mut() {
+            *ch = sample;
+        }
+        score += dt;
+    }
+    state.score_secs.store(score.to_bits(), Ordering::Relaxed);
 }

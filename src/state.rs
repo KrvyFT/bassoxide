@@ -1,10 +1,13 @@
 //! 应用状态管理。
 
+use std::sync::Arc;
+
 use bassoxide_core::song::Song;
 use bassoxide_layout::engine::{LayoutEngine, LayoutResult};
 use bassoxide_layout::spacing::LayoutSettings;
 use bassoxide_render::Theme;
 
+use crate::ui::audio_track::AudioTrack;
 use crate::ui::material::MaterialPalette;
 
 /// 编辑器光标位置
@@ -59,8 +62,10 @@ pub struct AppState {
     pub file_path: Option<String>,
     /// 状态栏消息
     pub status_message: String,
-    /// 音频引擎
-    pub audio_engine: Option<bassoxide_audio::AudioEngine>,
+    /// PCM 音频播放器（外部音频轨，非 MIDI）
+    pub audio_player: Option<bassoxide_audio::AudioPlayer>,
+    /// 外部音频同步轨
+    pub audio_track: Option<AudioTrack>,
     /// 视图缩放系数
     pub zoom_factor: f32,
     /// 当前显示的轨道索引（单轨道显示）
@@ -77,10 +82,10 @@ pub struct AppState {
 
 impl Default for AppState {
     fn default() -> Self {
-        let audio_engine = match bassoxide_audio::AudioEngine::new() {
-            Ok(engine) => Some(engine),
+        let audio_player = match bassoxide_audio::AudioPlayer::new() {
+            Ok(player) => Some(player),
             Err(e) => {
-                tracing::error!("Failed to initialize audio engine: {}", e);
+                tracing::error!("Failed to initialize audio player: {}", e);
                 None
             }
         };
@@ -99,7 +104,8 @@ impl Default for AppState {
             needs_relayout: false,
             file_path: None,
             status_message: "就绪".to_string(),
-            audio_engine,
+            audio_player,
+            audio_track: None,
             zoom_factor: 1.0,
             selected_track: 0,
             is_light_theme,
@@ -176,9 +182,18 @@ impl AppState {
             measure_count,
             song.tempo,
         );
-        if let Some(audio) = &self.audio_engine {
-            audio.stop();
-            audio.reload_song(&song);
+        // 换谱后按新拍号/速度重新分析已有音频的小节线
+        if let Some(track) = self.audio_track.as_mut() {
+            let bpb = bassoxide_audio::default_beats_per_bar(Some(&song));
+            track.analysis = bassoxide_audio::analyze_beats(
+                &track.samples,
+                track.sample_rate,
+                bpb,
+                Some(f64::from(song.tempo)),
+            );
+        }
+        if let Some(player) = &self.audio_player {
+            player.stop();
         }
         self.song = Some(song);
         self.needs_relayout = true;
@@ -204,6 +219,19 @@ impl AppState {
         if (self.layout_settings.available_width - width).abs() > 1.0 {
             self.layout_settings.available_width = width;
             self.needs_relayout = true;
+        }
+    }
+
+    /// 将当前音频轨同步到播放器
+    pub fn sync_player_from_track(&self) {
+        let Some(player) = &self.audio_player else {
+            return;
+        };
+        if let Some(track) = &self.audio_track {
+            player.set_audio(Arc::clone(&track.samples), track.sample_rate);
+            player.set_sync_offset(track.sync_offset_secs);
+        } else {
+            player.clear_audio();
         }
     }
 }
