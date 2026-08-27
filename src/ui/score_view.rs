@@ -115,63 +115,70 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                     );
                 }
 
-                // 拖选橡皮筋 + 单元格范围
-                if response.drag_started_by(egui::PointerButton::Primary) {
-                    new_drag_origin = response.interact_pointer_pos();
-                    if let Some(pos) = new_drag_origin {
+                // 用原始指针状态做拖选，避免 ScrollArea / Sense 吞掉 drag 事件
+                let (primary_pressed, primary_down, primary_released, pointer_pos, shift) =
+                    ui.ctx().input(|i| {
+                        (
+                            i.pointer.primary_pressed(),
+                            i.pointer.button_down(egui::PointerButton::Primary),
+                            i.pointer.primary_released(),
+                            i.pointer
+                                .interact_pos()
+                                .or(i.pointer.hover_pos())
+                                .or(i.pointer.latest_pos()),
+                            i.modifiers.shift,
+                        )
+                    });
+                let over_score = pointer_pos.is_some_and(|p| response.rect.contains(p));
+
+                if primary_pressed && over_score {
+                    if let Some(pos) = pointer_pos {
+                        new_drag_origin = Some(pos);
                         let local = Pos2::new(pos.x - offset.x, pos.y - offset.y);
                         new_drag_anchor =
                             hit_test_cursor(layout, song, selected, local, &layout_settings);
                     }
                 }
-                if response.dragged_by(egui::PointerButton::Primary) {
-                    if let (Some(origin), Some(pointer)) =
-                        (new_drag_origin.or(drag_origin), response.interact_pointer_pos())
-                    {
-                        new_drag_origin = Some(origin);
-                        let rect = Rect::from_two_pos(origin, pointer);
-                        if rect.width().abs() > 3.0 || rect.height().abs() > 3.0 {
-                            painter.rect_filled(
-                                rect,
-                                0.0,
-                                egui::Color32::from_rgba_unmultiplied(60, 120, 200, 36),
-                            );
-                            painter.rect_stroke(
-                                rect,
-                                0.0,
-                                Stroke::new(1.0, palette.primary),
-                                egui::StrokeKind::Outside,
-                            );
+
+                let origin = new_drag_origin.or(drag_origin);
+                let anchor = new_drag_anchor.or(drag_anchor);
+                let dragging = origin.is_some() && (primary_down || primary_released);
+                let mut drag_distance = 0.0_f32;
+                if let (Some(o), Some(p)) = (origin, pointer_pos) {
+                    drag_distance = o.distance(p);
+                    if dragging && drag_distance > 4.0 {
+                        let rect = Rect::from_two_pos(o, p);
+                        painter.rect_filled(
+                            rect,
+                            0.0,
+                            egui::Color32::from_rgba_unmultiplied(60, 120, 200, 36),
+                        );
+                        painter.rect_stroke(
+                            rect,
+                            0.0,
+                            Stroke::new(1.0, palette.primary),
+                            egui::StrokeKind::Outside,
+                        );
+                        // 拖动中实时预览选区
+                        if let (Some(a), Some(p)) = (anchor, pointer_pos) {
+                            let local = Pos2::new(p.x - offset.x, p.y - offset.y);
+                            if let Some(b) =
+                                hit_test_cursor(layout, song, selected, local, &layout_settings)
+                            {
+                                let notes = collect_notes_in_cell_range(song, selected, a, b);
+                                if !notes.is_empty() {
+                                    select_notes = Some(notes);
+                                }
+                            }
                         }
                     }
                 }
 
-                let shift = ui.ctx().input(|i| i.modifiers.shift);
-
-                if response.drag_stopped() {
-                    let end_pos = response
-                        .interact_pointer_pos()
-                        .or_else(|| ui.ctx().input(|i| i.pointer.latest_pos()));
-                    let anchor = new_drag_anchor.or(drag_anchor);
-                    if let (Some(a), Some(end_screen)) = (anchor, end_pos) {
-                        let local = Pos2::new(end_screen.x - offset.x, end_screen.y - offset.y);
-                        if let Some(b) =
-                            hit_test_cursor(layout, song, selected, local, &layout_settings)
-                        {
-                            let notes = collect_notes_in_cell_range(song, selected, a, b);
-                            if !notes.is_empty() {
-                                select_notes = Some(notes);
-                            }
-                        }
-                    }
-                    clear_drag = true;
-                    new_drag_origin = None;
-                    new_drag_anchor = None;
-                } else if response.clicked() {
-                    clear_drag = true;
-                    new_drag_origin = None;
-                    new_drag_anchor = None;
-                    if let Some(pos) = response.interact_pointer_pos() {
+                if primary_released && origin.is_some() {
+                    if drag_distance > 4.0 {
+                        // 多选已在上方写入 select_notes
+                    } else if let Some(pos) = pointer_pos.or(origin) {
+                        // 单击：小节热区优先，否则单音
                         let local = Pos2::new(pos.x - offset.x, pos.y - offset.y);
                         if let Some(m) =
                             hit_test_measure_header(layout, song, selected, local, &layout_settings)
@@ -214,6 +221,12 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                             seek_request = Some(secs);
                         }
                     }
+                    clear_drag = true;
+                    new_drag_origin = None;
+                    new_drag_anchor = None;
+                } else if primary_down && origin.is_some() {
+                    new_drag_origin = origin;
+                    new_drag_anchor = anchor;
                 }
             });
     }
@@ -350,24 +363,26 @@ fn collect_notes_in_cell_range(
     out
 }
 
-/// 点在谱表上方热区 → 整小节
+/// 点在谱表上方热区（含小节号与弦 1 上方衬垫）→ 整小节
 fn hit_test_measure_header(
     layout: &LayoutResult,
     song: &bassoxide_core::song::Song,
     selected_track: usize,
     pos: Pos2,
-    _settings: &bassoxide_layout::spacing::LayoutSettings,
+    settings: &bassoxide_layout::spacing::LayoutSettings,
 ) -> Option<usize> {
     let _ = song;
     for system in &layout.systems {
-        let staff = system.staves.iter().find(|s| {
+        let Some(staff) = system.staves.iter().find(|s| {
             s.track_index == selected_track
                 && s.staff_type == bassoxide_layout::staff::StaffType::Tablature
-        })?;
+        }) else {
+            continue;
+        };
         let staff_y = system.y + staff.y;
-        // 谱表上方 20px，略伸入顶部 4px，方便点小节号
-        let header_top = staff_y - 20.0;
-        let header_bot = staff_y + 4.0;
+        // 覆盖小节号（约 staff_y-18），下缘止于弦 1 之上，避免抢走音符点击
+        let header_top = staff_y - 36.0;
+        let header_bot = staff_y + (settings.note_pad() * 0.4).clamp(4.0, 12.0);
         if pos.y < header_top || pos.y > header_bot {
             continue;
         }
