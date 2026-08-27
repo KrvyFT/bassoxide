@@ -135,14 +135,10 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                     );
                 }
 
-                let shift = ui.ctx().input(|i| i.modifiers.shift);
-
-                // #region agent log
+                // 原始指针状态机做拖选（ScrollArea 下 response.drag_* 不可靠）；
+                // 单击/小节仍用 response.clicked()，同帧 press+release 不进入拖选。
                 let clicked = response.clicked();
-                let drag_started = response.drag_started_by(egui::PointerButton::Primary);
-                let dragged = response.dragged_by(egui::PointerButton::Primary);
-                let drag_stopped = response.drag_stopped();
-                let (raw_pressed, raw_down, raw_released, raw_pos, decidedly_dragging) =
+                let (raw_pressed, raw_down, raw_released, pointer_pos, shift, decidedly_dragging) =
                     ui.ctx().input(|i| {
                         (
                             i.pointer.primary_pressed(),
@@ -152,16 +148,25 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                                 .interact_pos()
                                 .or(i.pointer.hover_pos())
                                 .or(i.pointer.latest_pos()),
+                            i.modifiers.shift,
                             i.pointer.is_decidedly_dragging(),
                         )
                     });
-                let over_score = raw_pos.is_some_and(|p| response.rect.contains(p));
+                let over_score = pointer_pos.is_some_and(|p| response.rect.contains(p));
+                // 同帧 press+release：当作单击候选，不启动跨帧拖选
+                let same_frame_click = raw_pressed && raw_released;
+
+                // #region agent log
+                let drag_started = response.drag_started_by(egui::PointerButton::Primary);
+                let dragged = response.dragged_by(egui::PointerButton::Primary);
+                let drag_stopped = response.drag_stopped();
                 if clicked
                     || drag_started
                     || dragged
                     || drag_stopped
                     || raw_pressed
                     || raw_released
+                    || (raw_down && drag_origin.is_some())
                 {
                     let ip = response.interact_pointer_pos();
                     select_dbg(
@@ -169,10 +174,10 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                         "score_view.rs:sense",
                         "pointer_frame",
                         &format!(
-                            "{{\"clicked\":{clicked},\"drag_started\":{drag_started},\"dragged\":{dragged},\"drag_stopped\":{drag_stopped},\"raw_pressed\":{raw_pressed},\"raw_down\":{raw_down},\"raw_released\":{raw_released},\"decidedly_dragging\":{decidedly_dragging},\"over_score\":{over_score},\"interact_pos\":{},\"raw_pos\":{},\"hovered\":{},\"sense_click\":{},\"sense_drag\":{}}}",
+                            "{{\"clicked\":{clicked},\"drag_started\":{drag_started},\"dragged\":{dragged},\"drag_stopped\":{drag_stopped},\"raw_pressed\":{raw_pressed},\"raw_down\":{raw_down},\"raw_released\":{raw_released},\"decidedly_dragging\":{decidedly_dragging},\"same_frame_click\":{same_frame_click},\"over_score\":{over_score},\"interact_pos\":{},\"raw_pos\":{},\"hovered\":{},\"sense_click\":{},\"sense_drag\":{},\"runId\":\"post-fix\"}}",
                             ip.map(|p| format!("{{\"x\":{},\"y\":{}}}", p.x, p.y))
                                 .unwrap_or_else(|| "null".into()),
-                            raw_pos
+                            pointer_pos
                                 .map(|p| format!("{{\"x\":{},\"y\":{}}}", p.x, p.y))
                                 .unwrap_or_else(|| "null".into()),
                             response.hovered(),
@@ -183,20 +188,20 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                 }
                 // #endregion
 
-                // 拖选：egui drag 回调 + 拖动中实时写入选区（避免 drag_stopped 丢终点）
-                if drag_started {
-                    new_drag_origin = response.interact_pointer_pos();
-                    if let Some(pos) = new_drag_origin {
+                // press 跨帧才记 origin；同帧单击留给 response.clicked()
+                if raw_pressed && over_score && !same_frame_click {
+                    if let Some(pos) = pointer_pos {
+                        new_drag_origin = Some(pos);
                         let local = Pos2::new(pos.x - offset.x, pos.y - offset.y);
                         new_drag_anchor =
                             hit_test_cursor(layout, song, selected, local, &layout_settings);
                         // #region agent log
                         select_dbg(
                             "C",
-                            "score_view.rs:drag_started",
-                            "anchor_from_drag_start",
+                            "score_view.rs:raw_press",
+                            "anchor_from_raw_press",
                             &format!(
-                                "{{\"screen\":{{\"x\":{},\"y\":{}}},\"local\":{{\"x\":{},\"y\":{}}},\"anchor\":{}}}",
+                                "{{\"screen\":{{\"x\":{},\"y\":{}}},\"local\":{{\"x\":{},\"y\":{}}},\"anchor\":{},\"runId\":\"post-fix\"}}",
                                 pos.x,
                                 pos.y,
                                 local.x,
@@ -215,160 +220,120 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
 
                 let origin = new_drag_origin.or(drag_origin);
                 let anchor = new_drag_anchor.or(drag_anchor);
+                let mut drag_distance = 0.0_f32;
                 let mut did_drag_select = false;
 
-                if dragged {
-                    if let (Some(o), Some(pointer)) = (origin, response.interact_pointer_pos()) {
+                if let (Some(o), Some(p)) = (origin, pointer_pos) {
+                    drag_distance = o.distance(p);
+                }
+
+                // 按下移动中或松开时：位移超阈值则画橡皮筋并实时写入选区
+                let dragging =
+                    origin.is_some() && !same_frame_click && (raw_down || raw_released);
+                if dragging && drag_distance > 4.0 {
+                    if let (Some(o), Some(p)) = (origin, pointer_pos) {
                         new_drag_origin = Some(o);
                         new_drag_anchor = anchor;
-                        let rect = Rect::from_two_pos(o, pointer);
-                        if rect.width().abs() > 3.0 || rect.height().abs() > 3.0 {
-                            painter.rect_filled(
-                                rect,
-                                0.0,
-                                egui::Color32::from_rgba_unmultiplied(60, 120, 200, 36),
-                            );
-                            painter.rect_stroke(
-                                rect,
-                                0.0,
-                                Stroke::new(1.0, palette.primary),
-                                egui::StrokeKind::Outside,
-                            );
-                            if let Some(a) = anchor {
-                                let local =
-                                    Pos2::new(pointer.x - offset.x, pointer.y - offset.y);
-                                if let Some(b) = hit_test_cursor(
-                                    layout,
-                                    song,
-                                    selected,
-                                    local,
-                                    &layout_settings,
-                                ) {
-                                    let notes =
-                                        collect_notes_in_cell_range(song, selected, a, b);
-                                    // #region agent log
-                                    select_dbg(
-                                        "C",
-                                        "score_view.rs:dragged",
-                                        "collect_during_drag",
-                                        &format!(
-                                            "{{\"anchor\":{{\"m\":{},\"b\":{},\"s\":{}}},\"end\":{{\"m\":{},\"b\":{},\"s\":{}}},\"local\":{{\"x\":{},\"y\":{}}},\"note_count\":{},\"dist\":{}}}",
-                                            a.measure,
-                                            a.beat,
-                                            a.string,
-                                            b.measure,
-                                            b.beat,
-                                            b.string,
-                                            local.x,
-                                            local.y,
-                                            notes.len(),
-                                            o.distance(pointer),
-                                        ),
-                                    );
-                                    // #endregion
-                                    if !notes.is_empty() {
-                                        select_notes = Some(notes);
-                                        did_drag_select = true;
-                                    }
-                                } else {
-                                    // #region agent log
-                                    select_dbg(
-                                        "C",
-                                        "score_view.rs:dragged",
-                                        "end_hit_none",
-                                        &format!(
-                                            "{{\"local\":{{\"x\":{},\"y\":{}}},\"anchor_ok\":true}}",
-                                            local.x, local.y
-                                        ),
-                                    );
-                                    // #endregion
-                                }
-                            } else {
+                        let rect = Rect::from_two_pos(o, p);
+                        painter.rect_filled(
+                            rect,
+                            0.0,
+                            egui::Color32::from_rgba_unmultiplied(60, 120, 200, 36),
+                        );
+                        painter.rect_stroke(
+                            rect,
+                            0.0,
+                            Stroke::new(1.0, palette.primary),
+                            egui::StrokeKind::Outside,
+                        );
+                        if let Some(a) = anchor {
+                            let local = Pos2::new(p.x - offset.x, p.y - offset.y);
+                            if let Some(b) = hit_test_cursor(
+                                layout,
+                                song,
+                                selected,
+                                local,
+                                &layout_settings,
+                            ) {
+                                let notes =
+                                    collect_notes_in_cell_range(song, selected, a, b);
                                 // #region agent log
                                 select_dbg(
                                     "C",
-                                    "score_view.rs:dragged",
-                                    "anchor_none",
+                                    "score_view.rs:raw_drag",
+                                    "collect_during_raw_drag",
                                     &format!(
-                                        "{{\"pointer\":{{\"x\":{},\"y\":{}}}}}",
-                                        pointer.x, pointer.y
+                                        "{{\"anchor\":{{\"m\":{},\"b\":{},\"s\":{}}},\"end\":{{\"m\":{},\"b\":{},\"s\":{}}},\"local\":{{\"x\":{},\"y\":{}}},\"note_count\":{},\"dist\":{},\"runId\":\"post-fix\"}}",
+                                        a.measure,
+                                        a.beat,
+                                        a.string,
+                                        b.measure,
+                                        b.beat,
+                                        b.string,
+                                        local.x,
+                                        local.y,
+                                        notes.len(),
+                                        drag_distance,
                                     ),
                                 );
                                 // #endregion
-                            }
-                        }
-                    }
-                }
-
-                if drag_stopped {
-                    // 终点再算一次，防止最后一帧 dragged 未触发
-                    if !did_drag_select {
-                        let end_pos = response
-                            .interact_pointer_pos()
-                            .or_else(|| ui.ctx().input(|i| i.pointer.latest_pos()));
-                        if let (Some(a), Some(end_screen), Some(o)) = (anchor, end_pos, origin) {
-                            if o.distance(end_screen) > 4.0 {
-                                let local =
-                                    Pos2::new(end_screen.x - offset.x, end_screen.y - offset.y);
-                                if let Some(b) = hit_test_cursor(
-                                    layout,
-                                    song,
-                                    selected,
-                                    local,
-                                    &layout_settings,
-                                ) {
-                                    let notes =
-                                        collect_notes_in_cell_range(song, selected, a, b);
-                                    // #region agent log
-                                    select_dbg(
-                                        "C",
-                                        "score_view.rs:drag_stopped",
-                                        "collect_on_stop",
-                                        &format!(
-                                            "{{\"note_count\":{},\"dist\":{},\"did_drag_select\":{did_drag_select}}}",
-                                            notes.len(),
-                                            o.distance(end_screen),
-                                        ),
-                                    );
-                                    // #endregion
-                                    if !notes.is_empty() {
-                                        select_notes = Some(notes);
-                                    }
+                                if !notes.is_empty() {
+                                    select_notes = Some(notes);
+                                    did_drag_select = true;
                                 }
                             } else {
                                 // #region agent log
                                 select_dbg(
                                     "C",
-                                    "score_view.rs:drag_stopped",
-                                    "dist_too_small",
-                                    &format!("{{\"dist\":{}}}", o.distance(end_screen)),
+                                    "score_view.rs:raw_drag",
+                                    "end_hit_none",
+                                    &format!(
+                                        "{{\"local\":{{\"x\":{},\"y\":{}}},\"dist\":{},\"runId\":\"post-fix\"}}",
+                                        local.x, local.y, drag_distance
+                                    ),
                                 );
                                 // #endregion
                             }
                         } else {
                             // #region agent log
                             select_dbg(
-                                "A",
-                                "score_view.rs:drag_stopped",
-                                "missing_anchor_or_pos",
+                                "C",
+                                "score_view.rs:raw_drag",
+                                "anchor_none",
                                 &format!(
-                                    "{{\"has_anchor\":{},\"has_end\":{},\"has_origin\":{},\"did_drag_select\":{did_drag_select}}}",
-                                    anchor.is_some(),
-                                    end_pos.is_some(),
-                                    origin.is_some(),
+                                    "{{\"pointer\":{{\"x\":{},\"y\":{}}},\"runId\":\"post-fix\"}}",
+                                    p.x, p.y
                                 ),
                             );
                             // #endregion
                         }
                     }
+                }
+
+                if raw_released && origin.is_some() && drag_distance > 4.0 {
+                    // #region agent log
+                    select_dbg(
+                        "C",
+                        "score_view.rs:raw_release",
+                        "drag_select_finish",
+                        &format!(
+                            "{{\"did_drag_select\":{did_drag_select},\"dist\":{drag_distance},\"note_count\":{},\"runId\":\"post-fix\"}}",
+                            select_notes.as_ref().map(|n| n.len()).unwrap_or(0),
+                        ),
+                    );
+                    // #endregion
                     clear_drag = true;
                     new_drag_origin = None;
                     new_drag_anchor = None;
                 } else if clicked {
+                    // 单击 / Shift+加选 / 小节：不依赖 drag_*，也不被拖选吞掉
                     clear_drag = true;
                     new_drag_origin = None;
                     new_drag_anchor = None;
-                    if let Some(pos) = response.interact_pointer_pos() {
+                    let click_pos = response
+                        .interact_pointer_pos()
+                        .or(pointer_pos);
+                    if let Some(pos) = click_pos {
                         let local = Pos2::new(pos.x - offset.x, pos.y - offset.y);
                         let header_hit = hit_test_measure_header(
                             layout,
@@ -406,7 +371,7 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                             "score_view.rs:clicked",
                             "click_hit_tests",
                             &format!(
-                                "{{\"screen\":{{\"x\":{},\"y\":{}}},\"local\":{{\"x\":{},\"y\":{}}},\"offset\":{{\"x\":{},\"y\":{}}},\"header\":{},\"cursor\":{},\"header_band\":{}}}",
+                                "{{\"screen\":{{\"x\":{},\"y\":{}}},\"local\":{{\"x\":{},\"y\":{}}},\"offset\":{{\"x\":{},\"y\":{}}},\"header\":{},\"cursor\":{},\"header_band\":{},\"shift\":{shift},\"same_frame_click\":{same_frame_click},\"runId\":\"post-fix\"}}",
                                 pos.x,
                                 pos.y,
                                 local.x,
@@ -469,10 +434,28 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                             "B",
                             "score_view.rs:clicked",
                             "clicked_but_no_interact_pos",
-                            "{\"interact_pointer_pos\":null}",
+                            "{\"interact_pointer_pos\":null,\"runId\":\"post-fix\"}",
                         );
                         // #endregion
                     }
+                } else if raw_down && origin.is_some() {
+                    // 跨帧按住：保留 origin/anchor
+                    new_drag_origin = origin;
+                    new_drag_anchor = anchor;
+                } else if raw_released && origin.is_some() {
+                    // #region agent log
+                    select_dbg(
+                        "C",
+                        "score_view.rs:raw_release",
+                        "release_without_drag_or_click",
+                        &format!(
+                            "{{\"dist\":{drag_distance},\"clicked\":{clicked},\"runId\":\"post-fix\"}}"
+                        ),
+                    );
+                    // #endregion
+                    clear_drag = true;
+                    new_drag_origin = None;
+                    new_drag_anchor = None;
                 }
             });
     }
