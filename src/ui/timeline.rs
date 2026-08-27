@@ -1,6 +1,6 @@
 //! 底部轨道列表面板（选轨；谱面类型在顶部工具栏切换）。
 
-use eframe::egui::{self, FontId, RichText, Sense};
+use eframe::egui::{self, Align, FontId, Layout, RichText, Sense};
 
 use crate::state::AppState;
 use crate::ui::material::MaterialPalette;
@@ -66,24 +66,28 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
     let mut select_change: Option<usize> = None;
     let current_selected = state.selected_track;
 
-    let full_w = ui.available_width();
+    // 先锁定面板内容宽度，避免 ScrollArea 按「省略后的短文本」收缩行宽
+    let panel_w = ui.available_width().max(1.0);
     egui::Frame::NONE
         .fill(palette.surface_container_high)
         .corner_radius(egui::CornerRadius::ZERO)
         .inner_margin(egui::Margin::ZERO)
         .show(ui, |ui| {
-            ui.set_min_width(full_w);
+            ui.set_min_width(panel_w);
+            ui.set_max_width(panel_w);
             egui::ScrollArea::vertical()
                 .max_height(ui.available_height().max(80.0))
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    ui.set_min_width(ui.available_width());
+                    // 强制内容区与面板同宽，否则 allocate 只会得到「文字理想宽度」
+                    ui.set_min_width(panel_w);
+                    ui.set_max_width(panel_w);
                     ui.spacing_mut().item_spacing.y = 0.0;
 
                     if let Some(song) = &state.song {
                         let track_count = song.tracks.len();
                         for i in 0..track_count {
-                            let name = song.tracks[i].name.clone();
+                            let name = song.tracks[i].name.trim();
                             let selected = i == current_selected;
                             let row_fill = if selected {
                                 palette.primary_container
@@ -98,9 +102,8 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
                                 palette.on_surface
                             };
 
-                            let row_w = ui.available_width().max(full_w);
                             let (row_rect, row_resp) = ui.allocate_exact_size(
-                                egui::vec2(row_w, ROW_HEIGHT),
+                                egui::vec2(panel_w, ROW_HEIGHT),
                                 Sense::click(),
                             );
 
@@ -115,15 +118,17 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
                                 egui::Stroke::new(1.0_f32, palette.outline_variant),
                             );
 
-                            // 使用整行可用宽度；仅当文字真正超出时才省略
-                            let label = format!("Trk {}: {name}", i + 1);
+                            let label = if name.is_empty() {
+                                format!("Trk {}", i + 1)
+                            } else {
+                                format!("Trk {}: {name}", i + 1)
+                            };
                             let pad_x = 10.0;
+                            // 用实际分配到的行宽（应 ≈ panel_w）；仅真正溢出时才省略
                             let max_text_w = (row_rect.width() - pad_x * 2.0).max(24.0);
                             let font = FontId::proportional(13.0);
                             let drawn = ellipsize(ui, &label, max_text_w, &font);
-                            let galley = ui.fonts(|f| {
-                                f.layout_no_wrap(drawn, font, text_color)
-                            });
+                            let galley = ui.fonts(|f| f.layout_no_wrap(drawn, font, text_color));
                             let text_pos = egui::pos2(
                                 row_rect.left() + pad_x,
                                 row_rect.center().y - galley.size().y * 0.5,
@@ -145,10 +150,13 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
                             }
                         }
                     } else {
-                        ui.label(
-                            RichText::new("打开乐谱后可在此切换轨道")
-                                .color(palette.on_surface_variant),
-                        );
+                        ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                            ui.set_min_width(panel_w);
+                            ui.label(
+                                RichText::new("打开乐谱后可在此切换轨道")
+                                    .color(palette.on_surface_variant),
+                            );
+                        });
                     }
                 });
         });

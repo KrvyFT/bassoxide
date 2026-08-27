@@ -280,21 +280,11 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
 
     let mut song = Song::default();
 
-    // 2. 提取 Score/全局信息
+    // 2. 提取 Score/全局信息（Title/Artist 多为 CDATA，不能只用 .text()）
     if let Some(score_node) = doc.descendants().find(|n| n.has_tag_name("Score")) {
-        song.info.title = score_node
-            .descendants()
-            .find(|n| n.has_tag_name("Title"))
-            .and_then(|n| n.text())
-            .unwrap_or("Unknown Title")
-            .to_string();
-
-        song.info.artist = score_node
-            .descendants()
-            .find(|n| n.has_tag_name("Artist"))
-            .and_then(|n| n.text())
-            .unwrap_or("")
-            .to_string();
+        song.info.title = xml_child_text(score_node, "Title")
+            .unwrap_or_else(|| "Unknown Title".to_string());
+        song.info.artist = xml_child_text(score_node, "Artist").unwrap_or_default();
     }
 
     // 获取轨道 ID 顺序
@@ -325,12 +315,10 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
     for t_id in &track_ids {
         let mut track = Track::default();
         if let Some(track_node) = tracks_attr_map.get(t_id) {
-            track.name = track_node
-                .descendants()
-                .find(|n| n.has_tag_name("Name"))
-                .and_then(|n| n.text())
-                .unwrap_or("Track")
-                .to_string();
+            // 只用 Track 直接子节点 Name/ShortName，避免吃到 Sounds 内嵌 Name
+            track.name = xml_child_text(*track_node, "Name")
+                .or_else(|| xml_child_text(*track_node, "ShortName"))
+                .unwrap_or_else(|| format!("Track {}", t_id));
 
             if let Some(tuning_node) = track_node.descendants().find(|n| n.has_tag_name("Tuning")) {
                 let mut pitches = Vec::new();
@@ -563,10 +551,29 @@ fn apply_gp7_tempo_automations(doc: &Document, song: &mut Song) {
 }
 
 fn xml_child_u8(node: Node<'_, '_>, tag: &str) -> Option<u8> {
-    node.children()
-        .find(|n| n.has_tag_name(tag))
-        .and_then(|n| n.text())
-        .and_then(|t| t.trim().parse().ok())
+    xml_child_text(node, tag).and_then(|t| t.parse().ok())
+}
+
+/// 合并元素下全部文本/CDATA 并 trim。
+/// GPIF 常写成 `<Name>\n<![CDATA[Lead Guitar]]>\n</Name>`，`.text()` 只会拿到首个空白文本节点。
+fn xml_text_content(node: Node<'_, '_>) -> String {
+    let mut out = String::new();
+    for child in node.children() {
+        if let Some(t) = child.text() {
+            out.push_str(t);
+        }
+    }
+    out.trim().to_string()
+}
+
+fn xml_child_text(node: Node<'_, '_>, tag: &str) -> Option<String> {
+    let child = node.children().find(|n| n.has_tag_name(tag))?;
+    let text = xml_text_content(child);
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
 }
 
 /// 从 Track 的 Sounds/Sound/MIDI 与 MidiConnection 写入 GM program / bank / channel。
@@ -613,6 +620,15 @@ mod tests {
         assert!(!song.tracks.is_empty());
         assert_eq!(song.tempo, 200, "应从 MasterTrack Tempo 自动化读取 BPM");
         assert_eq!(song.display_tempo(), 200);
+        assert_eq!(song.info.title.trim(), "メタンハイドレート");
+        assert_eq!(song.info.artist.trim(), "文藝天国");
+        assert_eq!(song.tracks[0].name, "Lead Guitar");
+        if song.tracks.len() >= 5 {
+            assert_eq!(song.tracks[1].name, "Rhythm Guitar");
+            assert_eq!(song.tracks[2].name, "Electric Bass (finger)");
+            assert_eq!(song.tracks[3].name, "Drums");
+            assert_eq!(song.tracks[4].name, "Vocals");
+        }
         if song.tracks.len() >= 3 {
             assert_eq!(song.tracks[0].midi_program, 30, "Lead Guitar 应为 Distortion Guitar");
             assert_eq!(song.tracks[2].midi_program, 33, "贝斯轨应使用文件内 GM 33");
@@ -621,5 +637,22 @@ mod tests {
             assert_eq!(drums.midi_program, 0);
             assert_eq!(drums.midi_channel, 9);
         }
+    }
+
+    #[test]
+    fn test_xml_text_content_joins_cdata_after_whitespace() {
+        let xml = r#"<?xml version="1.0"?><Root><Name>
+        <![CDATA[Lead Guitar]]>
+      </Name><Empty>
+        <![CDATA[]]>
+      </Empty></Root>"#;
+        let doc = Document::parse(xml).unwrap();
+        let name = doc.descendants().find(|n| n.has_tag_name("Name")).unwrap();
+        // 合并全部文本节点并 trim，兼容仅空白 + CDATA 的 GPIF 写法
+        assert_eq!(xml_text_content(name), "Lead Guitar");
+        let empty = doc.descendants().find(|n| n.has_tag_name("Empty")).unwrap();
+        assert_eq!(xml_text_content(empty), "");
+        assert!(xml_child_text(doc.root_element(), "Name").as_deref() == Some("Lead Guitar"));
+        assert!(xml_child_text(doc.root_element(), "Empty").is_none());
     }
 }
