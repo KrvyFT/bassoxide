@@ -115,8 +115,10 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                     );
                 }
 
-                // 用原始指针状态做拖选，避免 ScrollArea / Sense 吞掉 drag 事件
-                let (primary_pressed, primary_down, primary_released, pointer_pos, shift) =
+                // 原始指针状态机做拖选（ScrollArea 下 response.drag_* 不可靠）；
+                // 单击/小节仍用 response.clicked()，同帧 press+release 不进入拖选。
+                let clicked = response.clicked();
+                let (raw_pressed, raw_down, raw_released, pointer_pos, shift) =
                     ui.ctx().input(|i| {
                         (
                             i.pointer.primary_pressed(),
@@ -130,8 +132,11 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                         )
                     });
                 let over_score = pointer_pos.is_some_and(|p| response.rect.contains(p));
+                // 同帧 press+release：当作单击候选，不启动跨帧拖选
+                let same_frame_click = raw_pressed && raw_released;
 
-                if primary_pressed && over_score {
+                // press 跨帧才记 origin；同帧单击留给 response.clicked()
+                if raw_pressed && over_score && !same_frame_click {
                     if let Some(pos) = pointer_pos {
                         new_drag_origin = Some(pos);
                         let local = Pos2::new(pos.x - offset.x, pos.y - offset.y);
@@ -142,11 +147,35 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
 
                 let origin = new_drag_origin.or(drag_origin);
                 let anchor = new_drag_anchor.or(drag_anchor);
-                let dragging = origin.is_some() && (primary_down || primary_released);
                 let mut drag_distance = 0.0_f32;
+
                 if let (Some(o), Some(p)) = (origin, pointer_pos) {
                     drag_distance = o.distance(p);
-                    if dragging && drag_distance > 4.0 {
+                }
+
+                // 按下移动中或松开时：位移超阈值则画橡皮筋并实时写入选区
+                let dragging =
+                    origin.is_some() && !same_frame_click && (raw_down || raw_released);
+                if dragging && drag_distance > 4.0 {
+                    if let (Some(o), Some(p)) = (origin, pointer_pos) {
+                        new_drag_origin = Some(o);
+                        let local = Pos2::new(p.x - offset.x, p.y - offset.y);
+                        // 起点若在谱号区未命中，拖入谱面后补建 anchor
+                        let mut effective_anchor = anchor;
+                        if effective_anchor.is_none() {
+                            if let Some(a) = hit_test_cursor(
+                                layout,
+                                song,
+                                selected,
+                                local,
+                                &layout_settings,
+                            ) {
+                                effective_anchor = Some(a);
+                                new_drag_anchor = Some(a);
+                            }
+                        } else {
+                            new_drag_anchor = effective_anchor;
+                        }
                         let rect = Rect::from_two_pos(o, p);
                         painter.rect_filled(
                             rect,
@@ -159,13 +188,16 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                             Stroke::new(1.0, palette.primary),
                             egui::StrokeKind::Outside,
                         );
-                        // 拖动中实时预览选区
-                        if let (Some(a), Some(p)) = (anchor, pointer_pos) {
-                            let local = Pos2::new(p.x - offset.x, p.y - offset.y);
-                            if let Some(b) =
-                                hit_test_cursor(layout, song, selected, local, &layout_settings)
-                            {
-                                let notes = collect_notes_in_cell_range(song, selected, a, b);
+                        if let Some(a) = effective_anchor {
+                            if let Some(b) = hit_test_cursor(
+                                layout,
+                                song,
+                                selected,
+                                local,
+                                &layout_settings,
+                            ) {
+                                let notes =
+                                    collect_notes_in_cell_range(song, selected, a, b);
                                 if !notes.is_empty() {
                                     select_notes = Some(notes);
                                 }
@@ -174,19 +206,37 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                     }
                 }
 
-                if primary_released && origin.is_some() {
-                    if drag_distance > 4.0 {
-                        // 多选已在上方写入 select_notes
-                    } else if let Some(pos) = pointer_pos.or(origin) {
-                        // 单击：小节热区优先，否则单音
+                if raw_released && origin.is_some() && drag_distance > 4.0 {
+                    clear_drag = true;
+                    new_drag_origin = None;
+                    new_drag_anchor = None;
+                } else if clicked {
+                    // 单击 / Shift+加选 / 小节：不依赖 drag_*，也不被拖选吞掉
+                    clear_drag = true;
+                    new_drag_origin = None;
+                    new_drag_anchor = None;
+                    let click_pos = response
+                        .interact_pointer_pos()
+                        .or(pointer_pos);
+                    if let Some(pos) = click_pos {
                         let local = Pos2::new(pos.x - offset.x, pos.y - offset.y);
-                        if let Some(m) =
-                            hit_test_measure_header(layout, song, selected, local, &layout_settings)
-                        {
+                        let header_hit = hit_test_measure_header(
+                            layout,
+                            song,
+                            selected,
+                            local,
+                            &layout_settings,
+                        );
+                        let cursor_ht = hit_test_cursor(
+                            layout,
+                            song,
+                            selected,
+                            local,
+                            &layout_settings,
+                        );
+                        if let Some(m) = header_hit {
                             select_measure = Some(m);
-                            if let Some(hit) =
-                                hit_test_cursor(layout, song, selected, local, &layout_settings)
-                            {
+                            if let Some(hit) = cursor_ht {
                                 cursor_hit = Some(CursorPosition {
                                     track: selected,
                                     measure: m,
@@ -201,17 +251,18 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                                     string: 1,
                                 });
                             }
-                        } else if let Some(hit) =
-                            hit_test_cursor(layout, song, selected, local, &layout_settings)
-                        {
+                        } else if let Some(hit) = cursor_ht {
                             cursor_hit = Some(hit);
                             if !shift {
                                 clear_selection = true;
                             }
                             if shift {
-                                if let Some(secs) =
-                                    score_secs_at_layout_pos(layout, song, selected, local)
-                                {
+                                if let Some(secs) = score_secs_at_layout_pos(
+                                    layout,
+                                    song,
+                                    selected,
+                                    local,
+                                ) {
                                     seek_request = Some(secs);
                                 }
                             }
@@ -221,12 +272,14 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                             seek_request = Some(secs);
                         }
                     }
+                } else if raw_down && origin.is_some() {
+                    // 跨帧按住：保留 origin/anchor
+                    new_drag_origin = origin;
+                    new_drag_anchor = anchor;
+                } else if raw_released && origin.is_some() {
                     clear_drag = true;
                     new_drag_origin = None;
                     new_drag_anchor = None;
-                } else if primary_down && origin.is_some() {
-                    new_drag_origin = origin;
-                    new_drag_anchor = anchor;
                 }
             });
     }
@@ -432,41 +485,65 @@ fn hit_test_cursor(
             continue;
         }
 
-        for mp in &system.measure_positions {
-            if pos.x < mp.x || pos.x > mp.x + mp.width {
-                continue;
+        // 优先命中所在小节；若在谱号区等外侧，吸附到最近小节
+        let mut best_mp_idx: Option<usize> = None;
+        let mut best_mp_d = f32::MAX;
+        for (i, mp) in system.measure_positions.iter().enumerate() {
+            if pos.x >= mp.x && pos.x <= mp.x + mp.width {
+                best_mp_idx = Some(i);
+                best_mp_d = 0.0;
+                break;
             }
-            let rel = pos.x - mp.x;
-            let beats = layout
-                .beat_positions
-                .get(mp.measure_index)
-                .and_then(|tracks| tracks.get(selected_track))?;
-            if beats.is_empty() {
-                return Some(CursorPosition {
-                    track: selected_track,
-                    measure: mp.measure_index,
-                    beat: 0,
-                    string: string_from_y(pos.y - staff_y, string_count, settings),
-                });
+            let d = if pos.x < mp.x {
+                mp.x - pos.x
+            } else {
+                pos.x - (mp.x + mp.width)
+            };
+            if d < best_mp_d {
+                best_mp_d = d;
+                best_mp_idx = Some(i);
             }
-            let mut best_i = 0usize;
-            let mut best_d = f32::MAX;
-            for (i, b) in beats.iter().enumerate() {
-                let cx = b.x + b.width * 0.5;
-                let d = (rel - cx).abs();
-                if d < best_d {
-                    best_d = d;
-                    best_i = i;
-                }
-            }
-            let beat_index = beats[best_i].beat_index;
+        }
+        let Some(mp) = best_mp_idx.map(|i| &system.measure_positions[i]) else {
+            continue;
+        };
+        // 离小节过远（例如完全在别的系统）则跳过
+        if best_mp_d > mp.width.max(40.0) {
+            continue;
+        }
+        let rel = (pos.x - mp.x).clamp(0.0, mp.width);
+        let Some(beats) = layout
+            .beat_positions
+            .get(mp.measure_index)
+            .and_then(|tracks| tracks.get(selected_track))
+        else {
+            continue;
+        };
+        if beats.is_empty() {
             return Some(CursorPosition {
                 track: selected_track,
                 measure: mp.measure_index,
-                beat: beat_index,
+                beat: 0,
                 string: string_from_y(pos.y - staff_y, string_count, settings),
             });
         }
+        let mut best_i = 0usize;
+        let mut best_d = f32::MAX;
+        for (i, b) in beats.iter().enumerate() {
+            let cx = b.x + b.width * 0.5;
+            let d = (rel - cx).abs();
+            if d < best_d {
+                best_d = d;
+                best_i = i;
+            }
+        }
+        let beat_index = beats[best_i].beat_index;
+        return Some(CursorPosition {
+            track: selected_track,
+            measure: mp.measure_index,
+            beat: beat_index,
+            string: string_from_y(pos.y - staff_y, string_count, settings),
+        });
     }
     None
 }
