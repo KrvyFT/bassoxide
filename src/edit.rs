@@ -212,7 +212,7 @@ pub fn change_note_string(state: &mut AppState, delta: i8) {
             if let Some(note) = beat.note_on_string(cur).cloned() {
                 if beat.note_on_string(target).is_none() {
                     let pitch = note.midi_note;
-                    let fret = (pitch as i16 - open as i16).clamp(0, 24) as i8;
+                    let fret = (pitch as i16 - open as i16).clamp(-24, 24) as i8;
                     if let Some(n) = beat.note_on_string_mut(cur) {
                         n.string = target;
                         n.fret = fret;
@@ -314,10 +314,11 @@ pub fn delete_note(state: &mut AppState) {
     state.fret_input.clear();
 }
 
-/// 设置光标弦品格；无音符则创建
+/// 设置光标弦品格；无音符则创建。支持负品格（显示为负数）。
 pub fn set_fret(state: &mut AppState, fret: i8) {
     ensure_beat_exists(state);
-    let fret = fret.clamp(0, 24);
+    let fret = fret.clamp(-24, 24);
+    let targets = edit_targets(state);
     let Some(song) = state.song.as_mut() else {
         return;
     };
@@ -325,39 +326,102 @@ pub fn set_fret(state: &mut AppState, fret: i8) {
         return;
     }
     let track_idx = state.cursor.track;
-    let measure_idx = state.cursor.measure;
-    let beat_idx = state.cursor.beat;
-    let string = state.cursor.string;
-    let midi = song.tracks[track_idx]
-        .tuning
-        .midi_note(string, fret)
-        .unwrap_or(40);
-    let track = &mut song.tracks[track_idx];
-    let Some(beat) = track
-        .measures
-        .get_mut(measure_idx)
-        .and_then(|m| m.primary_voice_mut().beats.get_mut(beat_idx))
-    else {
-        return;
-    };
-    beat.is_rest = false;
-    if let Some(note) = beat.note_on_string_mut(string) {
-        note.fret = fret;
-        note.midi_note = midi;
-        if note.note_type == NoteType::Dead {
-            note.note_type = NoteType::Normal;
+    let mut count = 0usize;
+    for target in &targets {
+        let midi = song.tracks[track_idx]
+            .tuning
+            .midi_note(target.string, fret)
+            .unwrap_or(40);
+        let track = &mut song.tracks[track_idx];
+        let Some(beat) = track
+            .measures
+            .get_mut(target.measure)
+            .and_then(|m| m.primary_voice_mut().beats.get_mut(target.beat))
+        else {
+            continue;
+        };
+        beat.is_rest = false;
+        if let Some(note) = beat.note_on_string_mut(target.string) {
+            note.fret = fret;
+            note.midi_note = midi;
+            if note.note_type == NoteType::Dead {
+                note.note_type = NoteType::Normal;
+            }
+        } else {
+            beat.notes.push(Note {
+                string: target.string,
+                fret,
+                midi_note: midi,
+                ..Note::default()
+            });
         }
-    } else {
-        beat.notes.push(Note {
-            string,
-            fret,
-            midi_note: midi,
-            ..Note::default()
-        });
+        count += 1;
     }
     state.needs_relayout = true;
-    state.status_message = format!("品格 {}", fret);
+    state.status_message = if count > 1 {
+        format!("品格 {}（{} 个音符）", fret, count)
+    } else {
+        format!("品格 {}", fret)
+    };
     refresh_duration_status(state);
+    state.fret_input.clear();
+}
+
+/// 当前编辑目标：多选音符，否则仅光标格
+fn edit_targets(state: &AppState) -> Vec<crate::state::NoteRef> {
+    if !state.selection.notes.is_empty() {
+        let mut v: Vec<_> = state.selection.notes.iter().copied().collect();
+        v.sort_by_key(|n| (n.measure, n.beat, n.string));
+        return v;
+    }
+    if let Some(m) = state.selection.measure {
+        let mut v = Vec::new();
+        if let Some(song) = state.song.as_ref() {
+            if let Some(track) = song.tracks.get(state.cursor.track) {
+                if let Some(measure) = track.measures.get(m) {
+                    for (bi, beat) in measure.primary_voice().beats.iter().enumerate() {
+                        for note in &beat.notes {
+                            v.push(crate::state::NoteRef {
+                                measure: m,
+                                beat: bi,
+                                string: note.string,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    vec![crate::state::NoteRef::from(state.cursor)]
+}
+
+/// 品格 ±1（可越过 0 到负数）
+pub fn nudge_fret(state: &mut AppState, delta: i8) {
+    if delta == 0 {
+        return;
+    }
+    sync_track(state);
+    let targets = edit_targets(state);
+    let Some(song) = state.song.as_ref() else {
+        return;
+    };
+    let track = match song.tracks.get(state.cursor.track) {
+        Some(t) => t,
+        None => return,
+    };
+    // 以光标格（或多选首个）为基准读取当前品格
+    let anchor = targets.first().copied().unwrap_or_else(|| state.cursor.into());
+    let current = track
+        .measures
+        .get(anchor.measure)
+        .and_then(|m| m.primary_voice().beats.get(anchor.beat))
+        .and_then(|b| b.note_on_string(anchor.string))
+        .map(|n| n.fret)
+        .unwrap_or(0);
+    set_fret(state, current.saturating_add(delta));
 }
 
 /// 切换附点
@@ -673,5 +737,41 @@ mod tests {
             .notes[0];
         assert_eq!(note.string, 2);
         assert_eq!(note.midi_note, midi_before);
+    }
+
+    #[test]
+    fn change_string_can_produce_negative_fret() {
+        let mut state = AppState::default();
+        state.load_song(song_one_measure(), None);
+        // 弦 6 空弦（低 E）移到弦 1：品格应为负数并显示
+        state.cursor.string = 6;
+        set_fret(&mut state, 0);
+        change_note_string(&mut state, -5); // 向高音弦移动
+        assert_eq!(state.cursor.string, 1);
+        let note = &state.song.as_ref().unwrap().tracks[0].measures[0]
+            .primary_voice()
+            .beats[0]
+            .notes[0];
+        assert!(note.fret < 0, "fret={}", note.fret);
+        assert_eq!(
+            bassoxide_layout::tablature::fret_display(note.fret),
+            note.fret.to_string()
+        );
+    }
+
+    #[test]
+    fn nudge_fret_below_zero() {
+        let mut state = AppState::default();
+        state.load_song(song_one_measure(), None);
+        state.cursor.string = 1;
+        set_fret(&mut state, 0);
+        nudge_fret(&mut state, -1);
+        let fret = state.song.as_ref().unwrap().tracks[0].measures[0]
+            .primary_voice()
+            .beats[0]
+            .notes[0]
+            .fret;
+        assert_eq!(fret, -1);
+        assert_eq!(bassoxide_layout::tablature::fret_display(fret), "-1");
     }
 }

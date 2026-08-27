@@ -3,6 +3,8 @@
 //! 将 `LayoutResult` 绘制到 egui `Painter` 上。
 //! 采用「单轨道 + A4 分页」排版，绘制白色 A4 页面、谱表、音符与节奏符杆。
 
+use std::collections::HashSet;
+
 use egui::{Color32, Painter, Pos2, Rect, Stroke, Vec2};
 use bassoxide_core::effects::{HammerOnPullOff, NoteEffect};
 use bassoxide_core::measure::check_voice_duration;
@@ -16,6 +18,7 @@ use crate::colors::Theme;
 use crate::cursor;
 use crate::note_render;
 use crate::rhythm_render::{self, RhythmBeat};
+use crate::selection;
 use crate::staff_render;
 
 /// 编辑光标（由 UI 传入；None 表示不绘制选中态）
@@ -32,6 +35,10 @@ pub struct ScorePainter<'a> {
     pub settings: &'a LayoutSettings,
     pub theme: &'a Theme,
     pub edit_cursor: Option<EditCursor>,
+    /// (measure, beat, string) 多选高亮
+    pub selected_notes: HashSet<(usize, usize, u8)>,
+    /// 整小节高亮
+    pub selected_measure: Option<usize>,
 }
 
 impl<'a> ScorePainter<'a> {
@@ -40,11 +47,23 @@ impl<'a> ScorePainter<'a> {
             settings,
             theme,
             edit_cursor: None,
+            selected_notes: HashSet::new(),
+            selected_measure: None,
         }
     }
 
     pub fn with_edit_cursor(mut self, cursor: EditCursor) -> Self {
         self.edit_cursor = Some(cursor);
+        self
+    }
+
+    pub fn with_selection(
+        mut self,
+        notes: HashSet<(usize, usize, u8)>,
+        measure: Option<usize>,
+    ) -> Self {
+        self.selected_notes = notes;
+        self.selected_measure = measure;
         self
     }
 
@@ -145,6 +164,28 @@ impl<'a> ScorePainter<'a> {
                         let measure_x = measure_pos.x + offset.x;
 
                         if staff.staff_type == bassoxide_layout::staff::StaffType::Tablature {
+                            // 小节号（谱表上方，避开弦 1 光标）
+                            let num_font =
+                                egui::FontId::new(10.0, egui::FontFamily::Proportional);
+                            painter.text(
+                                Pos2::new(measure_x + 2.0, staff_y - 18.0),
+                                egui::Align2::LEFT_BOTTOM,
+                                format!("{}", m + 1),
+                                num_font,
+                                self.theme.clef_color,
+                            );
+
+                            // 整小节选区高亮
+                            if self.selected_measure == Some(m) {
+                                selection::draw_selection(
+                                    painter,
+                                    measure_x,
+                                    staff_y - 16.0,
+                                    measure_pos.width,
+                                    staff.height + self.settings.rhythm_height + 16.0,
+                                );
+                            }
+
                             if let (Some(measure), Some(master)) =
                                 (track.measures.get(m), song.master_bar(m))
                             {
@@ -192,12 +233,18 @@ impl<'a> ScorePainter<'a> {
 
                                         if !beat.is_empty() {
                                             for note in &beat.notes {
-                                                let selected = self.edit_cursor.is_some_and(|c| {
-                                                    c.track == track_idx
-                                                        && c.measure == m
-                                                        && c.beat == bp.beat_index
-                                                        && c.string == note.string
-                                                });
+                                                let selected = self.selected_measure == Some(m)
+                                                    || self.selected_notes.contains(&(
+                                                        m,
+                                                        bp.beat_index,
+                                                        note.string,
+                                                    ))
+                                                    || self.edit_cursor.is_some_and(|c| {
+                                                        c.track == track_idx
+                                                            && c.measure == m
+                                                            && c.beat == bp.beat_index
+                                                            && c.string == note.string
+                                                    });
                                                 self.paint_note(
                                                     painter,
                                                     staff,

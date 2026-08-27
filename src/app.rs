@@ -437,6 +437,16 @@ impl BassoxideApp {
             edit::toggle_tie(&mut self.state);
         }
 
+        // +/- 调整品格（可越过 0 显示负数）；与保存快捷键 Ctrl+S 不冲突
+        if ctx.input(|i| {
+            (i.key_pressed(egui::Key::Equals) || i.key_pressed(egui::Key::Plus)) && !cmd
+        }) {
+            edit::nudge_fret(&mut self.state, 1);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Minus) && !cmd) {
+            edit::nudge_fret(&mut self.state, -1);
+        }
+
         // 数字品格
         for (key, ch) in [
             (egui::Key::Num0, '0'),
