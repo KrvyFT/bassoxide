@@ -1,8 +1,7 @@
 //! 进阶奏法效果绘制（推弦、滑音、揉弦、泛音等）
 
-use egui::{Painter, Pos2, Stroke, Color32, Vec2, Shape};
+use egui::{Painter, Pos2, Shape, Stroke};
 use bassoxide_core::effects::*;
-use bassoxide_core::note::Note;
 use crate::colors::Theme;
 
 /// 绘制泛音符号
@@ -44,7 +43,7 @@ pub fn draw_slide(
     y2: f32,
     theme: &Theme,
 ) {
-    let stroke = Stroke::new(1.5, theme.note_text);
+    let stroke = Stroke::new(1.5_f32, theme.note_text);
     // 从第一个音的右下角滑到下一个音的左上角 (近似)
     painter.line_segment(
         [Pos2::new(x1 + 6.0, y1 + 2.0), Pos2::new(x2 - 6.0, y2 - 2.0)],
@@ -60,7 +59,7 @@ pub fn draw_vibrato(
     width: f32,
     theme: &Theme,
 ) {
-    let stroke = Stroke::new(1.5, theme.note_text);
+    let stroke = Stroke::new(1.5_f32, theme.note_text);
     let mut points = vec![];
     let wave_len = 4.0;
     let wave_height = 2.0;
@@ -87,7 +86,7 @@ pub fn draw_bend(
     y: f32, // 音符中心 y
     theme: &Theme,
 ) {
-    let stroke = Stroke::new(1.5, theme.note_text);
+    let stroke = Stroke::new(1.5_f32, theme.note_text);
     // 简单绘制一个向上的弯折箭头
     let start = Pos2::new(x + 6.0, y);
     let top = Pos2::new(x + 12.0, y - 15.0); // 向上弯折
@@ -139,7 +138,7 @@ pub fn draw_text_line(
     
     // 画虚线
     let mut curr_x = x + 25.0; // 文字后面
-    let stroke = Stroke::new(1.0, color);
+    let stroke = Stroke::new(1.0_f32, color);
     while curr_x < x + width {
         painter.line_segment([Pos2::new(curr_x, y), Pos2::new(curr_x + 4.0, y)], stroke);
         curr_x += 8.0;

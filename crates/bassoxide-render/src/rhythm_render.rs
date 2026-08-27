@@ -29,13 +29,33 @@ fn beam_level(value: NoteValue) -> u8 {
     }
 }
 
+/// 根据小节宽度与节拍间距，得到符杆缩放（小节变窄时符杆变短）
+fn stem_fit_scale(beats: &[RhythmBeat], measure_width: f32, settings: &LayoutSettings) -> f32 {
+    let ref_measure = (settings.min_measure_width * 2.2).max(120.0);
+    let measure_s = (measure_width / ref_measure).clamp(0.55, 1.05);
+
+    let ref_gap = settings.reference_beat_gap();
+    let avg_gap = if beats.len() >= 2 {
+        let span = (beats.last().unwrap().x - beats.first().unwrap().x).abs();
+        span / (beats.len() - 1) as f32
+    } else {
+        (measure_width * 0.35).max(ref_gap * 0.5)
+    };
+    let dens_s = (avg_gap / ref_gap).clamp(0.55, 1.05);
+
+    // 取更紧的一侧，但保留更高下限，避免符杆缩成短 stubs
+    (measure_s * dens_s).sqrt().clamp(0.55, 1.05)
+}
+
 /// 绘制一小节的节奏符杆。
 ///
 /// `baseline_y` 为符干顶端 Y（一般是六线谱底线下方一点）。
+/// `measure_width` 用于按小节实际宽度压缩符杆。
 pub fn draw_measure_rhythm(
     painter: &Painter,
     beats: &[RhythmBeat],
     baseline_y: f32,
+    measure_width: f32,
     settings: &LayoutSettings,
     theme: &Theme,
 ) {
@@ -43,12 +63,23 @@ pub fn draw_measure_rhythm(
         return;
     }
 
-    let stem_len = (settings.rhythm_height * 0.62).max(10.0);
+    let dens = stem_fit_scale(beats, measure_width, settings);
+    // 符杆不得超过预留 rhythm_height（谱表∈纸张已计入该高度）
+    let max_stem = (settings.rhythm_height - 1.0).max(8.0);
+    let stem_len = ((settings.rhythm_height * 0.82).max(settings.tab_font_size * 1.15) * dens)
+        .clamp(10.0, max_stem);
     let stem_top = baseline_y;
     let stem_bottom = baseline_y + stem_len;
-    let stem_stroke = Stroke::new(1.3_f32, theme.note_text);
-    let beam_thickness = (settings.rhythm_height * 0.09).clamp(1.6, 2.6);
-    let beam_gap = beam_thickness + 1.6;
+    let stem_stroke = Stroke::new(
+        (settings.tab_font_size * 0.085 * dens).clamp(0.7, 2.0),
+        theme.note_text,
+    );
+    let beam_thickness = ((settings.tab_font_size * 0.11).max(settings.rhythm_height * 0.07) * dens)
+        .clamp(0.9, 2.8);
+    let beam_gap = (beam_thickness + 1.2 * dens).max(1.8);
+    let stub_len = (5.0 * dens).max(2.5);
+    let dot_r = (1.1 * dens).clamp(0.7, 1.6);
+    let flag_scale = dens.clamp(0.4, 1.1);
 
     // 计算每个 beat 的节奏属性
     let n = beats.len();
@@ -62,7 +93,11 @@ pub fn draw_measure_rhythm(
     for (i, rb) in beats.iter().enumerate() {
         let note = !rb.beat.is_empty();
         is_note[i] = note;
-        let lvl = if note { beam_level(rb.beat.duration.value) } else { 0 };
+        let lvl = if note {
+            beam_level(rb.beat.duration.value)
+        } else {
+            0
+        };
         levels[i] = lvl;
 
         // 判断是否可与前一个连成一组：均为音符、均可连杠、且不跨越四分拍边界
@@ -108,8 +143,11 @@ pub fn draw_measure_rhythm(
             let dots = if rb.beat.duration.double_dotted { 2 } else { 1 };
             for d in 0..dots {
                 painter.circle_filled(
-                    Pos2::new(rb.x + 4.0 + d as f32 * 3.5, stem_bottom - 2.0),
-                    1.4,
+                    Pos2::new(
+                        rb.x + (3.5 + d as f32 * 3.0) * dens,
+                        stem_bottom - 1.5 * dens,
+                    ),
+                    dot_r,
                     theme.note_text,
                 );
             }
@@ -147,18 +185,21 @@ pub fn draw_measure_rhythm(
                 );
             } else if in_group {
                 // 组内但该级别孤立：画一小段部分符杠（指向组内方向）
-                let dir = if i > 0 && group_id[i - 1] == g { -1.0 } else { 1.0 };
-                let stub = 6.0;
+                let dir = if i > 0 && group_id[i - 1] == g {
+                    -1.0
+                } else {
+                    1.0
+                };
                 painter.line_segment(
                     [
                         Pos2::new(beats[i].x, beam_y),
-                        Pos2::new(beats[i].x + dir * stub, beam_y),
+                        Pos2::new(beats[i].x + dir * stub_len, beam_y),
                     ],
                     Stroke::new(beam_thickness, theme.note_text),
                 );
             } else {
                 // 完全孤立的音符：画符尾（旗）
-                draw_flag(painter, beats[i].x, beam_y, beam_gap, theme);
+                draw_flag(painter, beats[i].x, beam_y, flag_scale, theme);
             }
             i = j + 1;
         }
@@ -166,7 +207,13 @@ pub fn draw_measure_rhythm(
 }
 
 /// 绘制符尾（旗），向右下方弯出
-fn draw_flag(painter: &Painter, x: f32, y: f32, _gap: f32, theme: &Theme) {
-    let stroke = Stroke::new(1.6_f32, theme.note_text);
-    painter.line_segment([Pos2::new(x, y), Pos2::new(x + 7.0, y + 4.0)], stroke);
+fn draw_flag(painter: &Painter, x: f32, y: f32, scale: f32, theme: &Theme) {
+    let stroke = Stroke::new((1.4 * scale).clamp(0.8, 2.0), theme.note_text);
+    painter.line_segment(
+        [
+            Pos2::new(x, y),
+            Pos2::new(x + 6.5 * scale, y + 3.5 * scale),
+        ],
+        stroke,
+    );
 }

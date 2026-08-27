@@ -107,6 +107,18 @@ impl Song {
         self.tracks.len()
     }
 
+    /// 工具栏显示用 BPM：优先 `song.tempo`，否则首个 MasterBar 的 tempo
+    pub fn display_tempo(&self) -> u16 {
+        if self.tempo > 0 {
+            return self.tempo;
+        }
+        self.master_bars
+            .iter()
+            .find_map(|mb| mb.tempo)
+            .unwrap_or(120)
+            .max(1)
+    }
+
     /// 获取指定小节的全局信息
     pub fn master_bar(&self, index: usize) -> Option<&MasterBar> {
         self.master_bars.get(index)

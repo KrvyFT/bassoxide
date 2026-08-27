@@ -80,6 +80,31 @@ fn score_settings_form(
 ) {
     let prefs = &mut state.score_prefs;
 
+    ui.label(
+        egui::RichText::new("约束优先级：① 音符必须在谱表内  ② 谱表必须在纸张内；冲突时自动调节其它参数")
+            .size(11.0)
+            .color(palette.on_surface_variant),
+    );
+    ui.add_space(8.0);
+
+    ui.label(egui::RichText::new("纸张大小").color(palette.on_surface));
+    ui.horizontal_wrapped(|ui| {
+        for size in bassoxide_layout::PaperSize::ALL {
+            let selected = prefs.paper_size == size;
+            let label = format!("{} ({})", size.label(), size.description());
+            if ui.selectable_label(selected, label).clicked() && !selected {
+                prefs.paper_size = size;
+                *changed = true;
+            }
+        }
+    });
+    ui.label(
+        egui::RichText::new("小节宽度、音符与符杆随纸张相对 A4 自动缩放")
+            .size(11.0)
+            .color(palette.on_surface_variant),
+    );
+    ui.add_space(8.0);
+
     ui.label(egui::RichText::new("字体大小").color(palette.on_surface));
     if ui
         .add(egui::Slider::new(&mut prefs.font_size, 8.0..=28.0).suffix(" px"))
@@ -100,11 +125,16 @@ fn score_settings_form(
 
     ui.label(egui::RichText::new("行间距（谱行间距）").color(palette.on_surface));
     if ui
-        .add(egui::Slider::new(&mut prefs.row_spacing, 40.0..=200.0).suffix(" px"))
+        .add(egui::Slider::new(&mut prefs.row_spacing, 0.0..=200.0).suffix(" px"))
         .changed()
     {
         *changed = true;
     }
+    ui.label(
+        egui::RichText::new("默认 10 = 无重叠最小间距 + 10px；可调更小")
+            .size(11.0)
+            .color(palette.on_surface_variant),
+    );
     ui.add_space(8.0);
 
     ui.label(egui::RichText::new("每行小节数").color(palette.on_surface));
@@ -121,7 +151,7 @@ fn score_settings_form(
         *changed = true;
     }
     ui.label(
-        egui::RichText::new("0 = 按页面宽度自动换行")
+        egui::RichText::new("0 = 按页面宽度自动换行；>0 时每行固定小节并自动铺满页宽")
             .size(11.0)
             .color(palette.on_surface_variant),
     );

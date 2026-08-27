@@ -68,16 +68,85 @@ impl Tuning {
             .find(|s| s.number == string)
             .map(|s| (s.tuning as i16 + fret as i16).clamp(0, 127) as MidiNote)
     }
+
+    /// 在给定品格上限内，为音高找最佳指法（优先低品格，其次靠近 prefer_string）
+    pub fn best_fingering(
+        &self,
+        pitch: MidiNote,
+        max_fret: u8,
+        prefer_string: Option<u8>,
+    ) -> Option<(u8, i8)> {
+        let max_fret = max_fret as i16;
+        let mut best: Option<(u8, i8, i16, i16)> = None; // string, fret, fret_cost, string_dist
+        for s in &self.strings {
+            let fret = pitch as i16 - s.tuning as i16;
+            if fret < 0 || fret > max_fret {
+                continue;
+            }
+            let string_dist = prefer_string
+                .map(|p| (p as i16 - s.number as i16).abs())
+                .unwrap_or(0);
+            let cand = (s.number, fret as i8, fret, string_dist);
+            let better = match best {
+                None => true,
+                Some((_, _, bf, bd)) => fret < bf || (fret == bf && string_dist < bd),
+            };
+            if better {
+                best = Some(cand);
+            }
+        }
+        best.map(|(n, f, _, _)| (n, f))
+    }
+
+    /// 调整弦数；新增弦按相邻弦向下约纯四度延伸，超出部分截断
+    pub fn resize_strings(&mut self, count: usize) {
+        let count = count.clamp(1, 8);
+        if count == self.strings.len() {
+            self.renumber_strings();
+            return;
+        }
+        if count < self.strings.len() {
+            self.strings.truncate(count);
+        } else {
+            while self.strings.len() < count {
+                let next_num = (self.strings.len() + 1) as u8;
+                let prev = self.strings.last().map(|s| s.tuning).unwrap_or(40);
+                let tuning = prev.saturating_sub(5).max(12);
+                self.strings.push(GuitarString {
+                    number: next_num,
+                    tuning,
+                });
+            }
+        }
+        self.renumber_strings();
+        self.name = format!("{}-string", count);
+    }
+
+    fn renumber_strings(&mut self) {
+        for (i, s) in self.strings.iter_mut().enumerate() {
+            s.number = (i + 1) as u8;
+        }
+    }
 }
 
-/// 轨道谱面显示配置（可多选；四线谱与六线谱互斥）
+/// MIDI 音高 → 科学音高名（如 E2、C#4）
+pub fn midi_note_name(midi: MidiNote) -> String {
+    const NAMES: [&str; 12] = [
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    ];
+    let name = NAMES[(midi % 12) as usize];
+    let octave = (midi as i16 / 12) - 1;
+    format!("{name}{octave}")
+}
+
+/// 轨道谱面显示配置（五线谱与六线谱可同时开启）
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StaffDisplay {
     /// 五线谱
     pub show_standard: bool,
-    /// Tab（四线/六线）
+    /// 六线谱（Tab，弦数由调弦决定）
     pub show_tab: bool,
-    /// Tab 弦数：4 或 6
+    /// Tab 弦数（与 `Track.tuning` 保持同步）
     pub tab_strings: u8,
 }
 
@@ -98,32 +167,25 @@ impl StaffDisplay {
             return Self {
                 show_standard: true,
                 show_tab: false,
-                tab_strings: 6,
+                tab_strings: string_count.max(1).min(8) as u8,
             };
         }
         let is_guitar_bass = (24..=39).contains(&midi_program) && string_count > 0;
         if is_guitar_bass {
-            let tab_strings = if string_count <= 4 { 4 } else { 6 };
             Self {
                 show_standard: false,
                 show_tab: true,
-                tab_strings,
+                tab_strings: string_count.clamp(1, 8) as u8,
             }
         } else {
             Self::default()
         }
     }
 
-    /// 启用四线谱（与六线互斥）
-    pub fn enable_four_string_tab(&mut self) {
+    /// 启用六线谱（Tab）
+    pub fn enable_tab(&mut self, string_count: u8) {
         self.show_tab = true;
-        self.tab_strings = 4;
-    }
-
-    /// 启用六线谱（与四线互斥）
-    pub fn enable_six_string_tab(&mut self) {
-        self.show_tab = true;
-        self.tab_strings = 6;
+        self.tab_strings = string_count.clamp(1, 8);
     }
 
     /// 关闭 Tab
@@ -239,33 +301,107 @@ impl Track {
         );
     }
 
-    /// 用户在弹窗中切换四/六线时同步标准调弦（显式操作）
-    pub fn apply_tab_string_count(&mut self, strings: u8) {
-        match strings {
-            4 => {
-                self.staff_display.enable_four_string_tab();
-                if self.string_count() != 4 {
-                    self.tuning = Tuning::standard_bass();
-                }
+    /// 同步 Tab 弦数显示与当前调弦
+    pub fn sync_tab_string_count(&mut self) {
+        self.staff_display.tab_strings = self.string_count().clamp(1, 8) as u8;
+    }
+
+    /// 启用六线谱并按当前（或指定）弦数同步调弦显示
+    pub fn enable_tab(&mut self) {
+        self.sync_tab_string_count();
+        self.staff_display.enable_tab(self.staff_display.tab_strings);
+    }
+
+    /// 调整弦数：保留音高地重映射谱面音符，并更新 Tab 显示
+    pub fn set_string_count(&mut self, count: usize) {
+        let count = count.clamp(1, 8);
+        if count == self.string_count() {
+            self.sync_tab_string_count();
+            self.staff_display.show_tab = true;
+            return;
+        }
+        let old = self.tuning.clone();
+        self.tuning.resize_strings(count);
+        self.remap_notes_preserving_pitch(&old);
+        self.sync_tab_string_count();
+        self.staff_display.show_tab = true;
+    }
+
+    /// 修改某一弦空弦音高，并按旧音高把音符映射到新指法
+    pub fn set_string_open_pitch(&mut self, string_number: u8, midi: MidiNote) {
+        let old = self.tuning.clone();
+        if let Some(s) = self
+            .tuning
+            .strings
+            .iter_mut()
+            .find(|s| s.number == string_number)
+        {
+            if s.tuning == midi {
+                return;
             }
-            6 => {
-                self.staff_display.enable_six_string_tab();
-                if self.string_count() != 6 {
-                    self.tuning = Tuning::standard_guitar();
+            s.tuning = midi;
+        } else {
+            return;
+        }
+        self.remap_notes_preserving_pitch(&old);
+    }
+
+    /// 将轨道上所有音符按「旧调弦算出的音高」映射到新调弦的弦位
+    pub fn remap_notes_preserving_pitch(&mut self, old_tuning: &Tuning) {
+        let max_fret = self.fret_count.max(24);
+        let new_tuning = self.tuning.clone();
+        for measure in &mut self.measures {
+            for voice in &mut measure.voices {
+                for beat in &mut voice.beats {
+                    for note in &mut beat.notes {
+                        let pitch = if note.midi_note > 0 {
+                            note.midi_note
+                        } else {
+                            old_tuning
+                                .midi_note(note.string, note.fret)
+                                .unwrap_or(note.midi_note)
+                        };
+                        if note.is_dead() && note.fret < 0 {
+                            // 死音：尽量保留原弦，否则落到最近弦
+                            let s = note
+                                .string
+                                .min(new_tuning.string_count() as u8)
+                                .max(1);
+                            note.string = s;
+                            continue;
+                        }
+                        if let Some((s, f)) =
+                            new_tuning.best_fingering(pitch, max_fret, Some(note.string))
+                        {
+                            note.string = s;
+                            note.fret = f;
+                            note.midi_note = pitch;
+                        } else if let Some((s, f)) =
+                            new_tuning.best_fingering(pitch, 24, Some(note.string))
+                        {
+                            note.string = s;
+                            note.fret = f;
+                            note.midi_note = pitch;
+                        }
+                    }
                 }
-            }
-            _ => {
-                self.staff_display.tab_strings = strings.clamp(4, 6);
-                self.staff_display.show_tab = true;
             }
         }
+    }
+
+    /// 用户切换 Tab 弦数时同步调弦并重映射音符（兼容旧调用）
+    pub fn apply_tab_string_count(&mut self, strings: u8) {
+        self.set_string_count(strings as usize);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::beat::{Beat, Voice};
+    use crate::measure::Measure;
     use crate::midi::MidiChannel;
+    use crate::note::Note;
 
     #[test]
     fn apply_midi_channel_keeps_file_program() {
@@ -305,7 +441,38 @@ mod tests {
     }
 
     #[test]
-    fn apply_tab_string_count_switches_tuning() {
+    fn set_string_count_remaps_notes_by_pitch() {
+        let mut track = Track::default();
+        track.measures.push(Measure {
+            voices: std::array::from_fn(|_| Voice::default()),
+            ..Default::default()
+        });
+        // 1 弦空弦 E4 (64)
+        track.measures[0].voices[0].beats.push(Beat {
+            notes: vec![Note {
+                string: 1,
+                fret: 0,
+                midi_note: 64,
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        // 改为 4 弦贝斯调弦后，E4 应落到更高品格的某弦
+        track.tuning = Tuning::standard_bass();
+        track.staff_display.tab_strings = 4;
+        let old = Tuning::standard_guitar();
+        track.remap_notes_preserving_pitch(&old);
+        let n = &track.measures[0].voices[0].beats[0].notes[0];
+        assert_eq!(n.midi_note, 64);
+        assert_eq!(
+            track.tuning.midi_note(n.string, n.fret),
+            Some(64),
+            "指法应仍发出原音高"
+        );
+    }
+
+    #[test]
+    fn apply_tab_string_count_switches_tuning_size() {
         let mut track = Track::default();
         track.apply_tab_string_count(4);
         assert!(track.staff_display.show_tab);
@@ -315,5 +482,12 @@ mod tests {
         track.apply_tab_string_count(6);
         assert_eq!(track.staff_display.tab_strings, 6);
         assert_eq!(track.string_count(), 6);
+    }
+
+    #[test]
+    fn midi_note_name_formats() {
+        assert_eq!(midi_note_name(40), "E2");
+        assert_eq!(midi_note_name(64), "E4");
+        assert_eq!(midi_note_name(60), "C4");
     }
 }

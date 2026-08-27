@@ -89,7 +89,7 @@ pub fn build_demo_song() -> Song {
         })
         .collect();
 
-    // 电贝斯 — 四线谱
+    // 电贝斯 — Tab（4 弦调弦）
     let mut bass = Track {
         number: 2,
         name: "Electric Bass".into(),

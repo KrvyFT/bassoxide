@@ -14,10 +14,25 @@ fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let load_demo = args.iter().any(|a| a == "--demo");
     let open_settings = args.iter().any(|a| a == "--settings");
+    let audio_path = args
+        .windows(2)
+        .find(|w| w[0] == "--audio")
+        .map(|w| w[1].clone());
+    let mut skip_next = false;
     let startup_path = args
         .iter()
         .skip(1)
-        .find(|a| !a.starts_with('-'))
+        .find(|a| {
+            if skip_next {
+                skip_next = false;
+                return false;
+            }
+            if *a == "--audio" {
+                skip_next = true;
+                return false;
+            }
+            !a.starts_with('-')
+        })
         .cloned();
 
     let options = eframe::NativeOptions {
@@ -38,6 +53,9 @@ fn main() -> eframe::Result<()> {
                     .load_song(demo::build_demo_song(), Some("demo://material-you".into()));
             } else if let Some(path) = startup_path {
                 app.open_path(std::path::Path::new(&path));
+            }
+            if let Some(path) = audio_path {
+                app.load_audio_path(std::path::Path::new(&path));
             }
             if open_settings {
                 app.state.settings_open = true;

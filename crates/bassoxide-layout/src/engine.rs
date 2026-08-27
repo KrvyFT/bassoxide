@@ -83,7 +83,8 @@ impl LayoutEngine {
         // 4. 分页 + 逐行详细布局
         let page_gap = 30.0;
         let page_left = 24.0;
-        let line_gap = (self.settings.system_gap * 0.4).max(16.0);
+        // 行间距直接使用 system_gap（默认 80）
+        let line_gap = self.settings.system_gap.max(8.0);
         let content_top_pad = self.settings.margin_top.min(self.settings.page_margin);
 
         let mut pages: Vec<PageLayout> = Vec::new();
@@ -233,7 +234,8 @@ impl LayoutEngine {
     fn build_track_staves(&self, song: &Song, selected: usize) -> (Vec<StaffLayout>, f32) {
         let s = &self.settings;
         let mut staves = Vec::new();
-        let mut staff_y = 0.0;
+        let mut y = 0.0f32;
+        let mut total = 0.0f32;
 
         let track = match song.tracks.get(selected) {
             Some(t) => t,
@@ -244,48 +246,48 @@ impl LayoutEngine {
         let mut any = false;
 
         if display.show_standard {
-            let standard_height = s.standard_staff_height();
+            let band = s.standard_band_height();
             staves.push(StaffLayout {
                 staff_type: StaffType::Standard,
                 track_index: selected,
                 string_count: 5,
-                y: staff_y,
-                height: standard_height,
+                y,
+                height: band,
             });
-            staff_y += standard_height + s.track_gap;
+            total = y + band;
+            y = total + s.track_gap;
             any = true;
         }
 
         if display.show_tab {
-            let string_count = display.tab_strings.max(1) as usize;
-            let tab_height = s.tab_staff_height(string_count);
+            let string_count = track.tuning.string_count().clamp(1, 8);
+            let band = s.tab_band_height(string_count);
             staves.push(StaffLayout {
                 staff_type: StaffType::Tablature,
                 track_index: selected,
                 string_count,
-                y: staff_y,
-                height: tab_height,
+                y,
+                height: band,
             });
-            // Tab 下方预留符杆(节奏)区域
-            staff_y += tab_height + s.rhythm_height + 8.0;
+            // Tab 下方预留符杆(节奏)区域 —— 计入 system 高度，保证谱表∈纸张
+            total = y + band + s.rhythm_height + 8.0;
             any = true;
         }
 
         // 兜底：至少显示五线谱，避免空白
         if !any {
-            let standard_height = s.standard_staff_height();
+            let band = s.standard_band_height();
             staves.push(StaffLayout {
                 staff_type: StaffType::Standard,
                 track_index: selected,
                 string_count: 5,
-                y: staff_y,
-                height: standard_height,
+                y: 0.0,
+                height: band,
             });
-            staff_y += standard_height + s.track_gap;
+            total = band;
         }
 
-        let total_height = (staff_y - s.track_gap + 10.0).max(0.0);
-        (staves, total_height)
+        (staves, total.max(24.0))
     }
 
     /// 布局单行 System
@@ -303,11 +305,21 @@ impl LayoutEngine {
     ) -> SystemLayout {
         let s = &self.settings;
         let preamble_width = s.clef_width + s.time_sig_width;
+        let count = end.saturating_sub(start).max(1);
+        // 自动缩放：本行所有小节总宽铺满页面内容区
+        let available = (s.page_content_width() - preamble_width).max(s.min_measure_width);
+        let natural_sum: f32 = (start..end).map(|m| measure_widths[m]).sum::<f32>().max(1.0);
 
         let mut measure_positions = Vec::new();
         let mut x = content_left + preamble_width;
         for m in start..end {
-            let width = measure_widths[m];
+            let width = if s.measures_per_line > 0 {
+                // 固定每行 N 小节：等分页宽，观感整齐
+                available / count as f32
+            } else {
+                // 自动换行：按内容比例拉伸铺满
+                measure_widths[m] / natural_sum * available
+            };
             measure_positions.push(MeasurePosition {
                 measure_index: m,
                 x,
@@ -316,7 +328,7 @@ impl LayoutEngine {
             x += width;
         }
 
-        let content_width = (x - content_left).max(preamble_width);
+        let content_width = s.page_content_width().max(preamble_width);
 
         SystemLayout {
             start_measure: start,
@@ -362,5 +374,174 @@ impl LayoutEngine {
         }
 
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bassoxide_core::beat::{Beat, Voice};
+    use bassoxide_core::measure::{MasterBar, Measure};
+    use bassoxide_core::note::Note;
+    use bassoxide_core::song::{Song, SongInfo};
+    use bassoxide_core::track::{StaffDisplay, Track, Tuning};
+    use bassoxide_core::types::Duration;
+    use crate::PaperSize;
+
+    fn sample_song(measures: usize) -> Song {
+        let mut song = Song {
+            info: SongInfo {
+                title: "layout-test".into(),
+                ..Default::default()
+            },
+            tempo: 120,
+            ..Default::default()
+        };
+        for _ in 0..measures {
+            song.master_bars.push(MasterBar::default());
+        }
+        let mut track = Track {
+            name: "Gtr".into(),
+            tuning: Tuning::standard_guitar(),
+            staff_display: StaffDisplay {
+                show_standard: false,
+                show_tab: true,
+                tab_strings: 6,
+            },
+            ..Default::default()
+        };
+        for _ in 0..measures {
+            let mut voices = [
+                Voice::default(),
+                Voice::default(),
+                Voice::default(),
+                Voice::default(),
+            ];
+            voices[0].beats = vec![
+                Beat {
+                    duration: Duration::default(),
+                    notes: vec![Note {
+                        string: 1,
+                        fret: 0,
+                        midi_note: 40,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                Beat {
+                    duration: Duration::default(),
+                    notes: vec![Note {
+                        string: 1,
+                        fret: 2,
+                        midi_note: 42,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ];
+            track.measures.push(Measure {
+                voices,
+                ..Default::default()
+            });
+        }
+        song.tracks.push(track);
+        song
+    }
+
+    #[test]
+    fn four_measures_fill_page_width() {
+        let settings = LayoutSettings::default();
+        assert_eq!(settings.measures_per_line, 4);
+        assert!((settings.tab_font_size - 13.0).abs() < f32::EPSILON);
+        assert!((settings.tab_string_spacing - 10.0).abs() < f32::EPSILON);
+        assert!((settings.system_gap - 10.0).abs() < f32::EPSILON);
+
+        let song = sample_song(8);
+        let engine = LayoutEngine::new(settings.clone()).with_selected_track(0);
+        let layout = engine.layout(&song);
+        assert!(!layout.systems.is_empty());
+
+        let preamble = settings.clef_width + settings.time_sig_width;
+        let available = settings.page_content_width() - preamble;
+        for system in &layout.systems {
+            let sum: f32 = system.measure_positions.iter().map(|m| m.width).sum();
+            assert!(
+                (sum - available).abs() < 1.0,
+                "sum={sum} available={available}"
+            );
+            assert!(system.measure_positions.len() <= 4);
+            // 固定 4 小节时等宽
+            if system.measure_positions.len() == 4 {
+                for mp in &system.measure_positions {
+                    assert!((mp.width - available / 4.0).abs() < 1.0);
+                }
+            }
+        }
+        // 行间距使用完整 system_gap，同页多行时应能自动分页
+        assert!(layout.pages.len() >= 1);
+        assert_eq!(layout.systems.len(), 2, "8 measures / 4 per line => 2 systems");
+    }
+
+    #[test]
+    fn paper_size_scales_page_and_measure_width() {
+        let mut a4 = LayoutSettings::default();
+        a4.paper_size = PaperSize::A4;
+        a4.content_scale = PaperSize::A4.content_scale();
+        let (w4, h4) = PaperSize::A4.size_px();
+        a4.page_width = w4;
+        a4.page_height = h4;
+
+        let mut a5 = a4.clone();
+        a5.paper_size = PaperSize::A5;
+        a5.content_scale = PaperSize::A5.content_scale();
+        let (w5, h5) = PaperSize::A5.size_px();
+        a5.page_width = w5;
+        a5.page_height = h5;
+        a5.min_measure_width *= a5.content_scale;
+        a5.min_beat_spacing *= a5.content_scale;
+
+        let song = sample_song(4);
+        let layout_a4 = LayoutEngine::new(a4.clone())
+            .with_selected_track(0)
+            .layout(&song);
+        let layout_a5 = LayoutEngine::new(a5.clone())
+            .with_selected_track(0)
+            .layout(&song);
+
+        assert!((layout_a4.page_width - w4).abs() < 1.0);
+        assert!((layout_a5.page_width - w5).abs() < 1.0);
+        assert!(layout_a5.page_width < layout_a4.page_width);
+
+        let sum_a4: f32 = layout_a4.systems[0]
+            .measure_positions
+            .iter()
+            .map(|m| m.width)
+            .sum();
+        let sum_a5: f32 = layout_a5.systems[0]
+            .measure_positions
+            .iter()
+            .map(|m| m.width)
+            .sum();
+        assert!(sum_a5 < sum_a4, "a5={sum_a5} a4={sum_a4}");
+    }
+
+    #[test]
+    fn row_spacing_affects_page_capacity() {
+        let mut tight = LayoutSettings::default();
+        tight.system_gap = 40.0;
+        let mut loose = LayoutSettings::default();
+        loose.system_gap = 200.0;
+
+        let song = sample_song(24);
+        let layout_tight = LayoutEngine::new(tight).with_selected_track(0).layout(&song);
+        let layout_loose = LayoutEngine::new(loose).with_selected_track(0).layout(&song);
+
+        assert!(
+            layout_loose.pages.len() >= layout_tight.pages.len(),
+            "loose pages={} tight pages={}",
+            layout_loose.pages.len(),
+            layout_tight.pages.len()
+        );
+        assert!(layout_loose.pages.len() > 1 || layout_tight.pages.len() == 1);
     }
 }

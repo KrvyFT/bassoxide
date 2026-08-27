@@ -3,7 +3,7 @@
 use bassoxide_core::beat::{Beat, Voice};
 use bassoxide_core::measure::{MasterBar, Measure};
 use bassoxide_core::note::Note;
-use bassoxide_core::song::{Song, SongInfo};
+use bassoxide_core::song::Song;
 use bassoxide_core::track::{Track, Tuning};
 use bassoxide_core::types::{Duration, NoteValue, TimeSignature};
 use roxmltree::{Document, Node};
@@ -37,8 +37,11 @@ struct Gp7Beat {
 
 #[derive(Debug, Default)]
 struct Gp7Note {
+    /// GPIF 0-based 弦索引（0 = 最低音弦）
     string: usize,
     fret: usize,
+    /// GPIF `<Midi>` 音高（若有则优先使用）
+    midi: Option<u8>,
     is_tie: bool,
     pub is_dead: bool,
     pub has_vibrato: bool,
@@ -151,6 +154,16 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                             }
                         }
                     }
+                    // MasterBar 内嵌 Tempo（部分导出）
+                    if let Some(tempo_node) = node.descendants().find(|n| n.has_tag_name("Tempo")) {
+                        if let Some(text) = tempo_node.text() {
+                            if let Ok(bpm) = text.trim().split_whitespace().next().unwrap_or("").parse::<u16>() {
+                                if bpm > 0 {
+                                    mb.tempo = Some(bpm);
+                                }
+                            }
+                        }
+                    }
                     if id.is_empty() {
                         continue;
                     }
@@ -216,6 +229,15 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                                             note.fret = inner.text().unwrap_or("0").parse().unwrap_or(0);
                                         }
                                     }
+                                    "Midi" => {
+                                        if let Some(inner) =
+                                            p.descendants().find(|n| n.has_tag_name("Number"))
+                                        {
+                                            note.midi = inner.text().and_then(|t| t.trim().parse().ok());
+                                        } else if let Some(t) = p.text() {
+                                            note.midi = t.trim().parse().ok();
+                                        }
+                                    }
                                     "Tie" => note.is_tie = true,
                                     "Muted" => note.is_dead = true,
                                     "Vibrato" => note.has_vibrato = true,
@@ -270,21 +292,11 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
 
     let mut song = Song::default();
 
-    // 2. 提取 Score/全局信息
+    // 2. 提取 Score/全局信息（Title/Artist 多为 CDATA，不能只用 .text()）
     if let Some(score_node) = doc.descendants().find(|n| n.has_tag_name("Score")) {
-        song.info.title = score_node
-            .descendants()
-            .find(|n| n.has_tag_name("Title"))
-            .and_then(|n| n.text())
-            .unwrap_or("Unknown Title")
-            .to_string();
-
-        song.info.artist = score_node
-            .descendants()
-            .find(|n| n.has_tag_name("Artist"))
-            .and_then(|n| n.text())
-            .unwrap_or("")
-            .to_string();
+        song.info.title = xml_child_text(score_node, "Title")
+            .unwrap_or_else(|| "Unknown Title".to_string());
+        song.info.artist = xml_child_text(score_node, "Artist").unwrap_or_default();
     }
 
     // 获取轨道 ID 顺序
@@ -315,12 +327,10 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
     for t_id in &track_ids {
         let mut track = Track::default();
         if let Some(track_node) = tracks_attr_map.get(t_id) {
-            track.name = track_node
-                .descendants()
-                .find(|n| n.has_tag_name("Name"))
-                .and_then(|n| n.text())
-                .unwrap_or("Track")
-                .to_string();
+            // 只用 Track 直接子节点 Name/ShortName，避免吃到 Sounds 内嵌 Name
+            track.name = xml_child_text(*track_node, "Name")
+                .or_else(|| xml_child_text(*track_node, "ShortName"))
+                .unwrap_or_else(|| format!("Track {}", t_id));
 
             if let Some(tuning_node) = track_node.descendants().find(|n| n.has_tag_name("Tuning")) {
                 let mut pitches = Vec::new();
@@ -336,9 +346,11 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                     }
                 }
                 if !pitches.is_empty() {
+                    // GPIF <Pitches> 为低音弦→高音弦；应用内约定弦 1 = 最高音弦（谱面最上方）
+                    let high_to_low: Vec<u8> = pitches.into_iter().rev().collect();
                     track.tuning = Tuning {
                         name: "Custom".to_string(),
-                        strings: pitches
+                        strings: high_to_low
                             .into_iter()
                             .enumerate()
                             .map(|(i, tuning)| bassoxide_core::track::GuitarString {
@@ -419,9 +431,19 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                                                 bassoxide_core::note::NoteType::Normal
                                             };
 
+                                            // GPIF String：0 = 最低音弦；应用弦号：1 = 最高音弦
+                                            let n_str = track_objects[track_idx]
+                                                .tuning
+                                                .string_count()
+                                                .max(1);
+                                            let our_string = (n_str as u8)
+                                                .saturating_sub(gp7_note.string as u8)
+                                                .clamp(1, n_str as u8);
+                                            let fret = gp7_note.fret as i8;
+
                                             let mut note = Note {
-                                                string: gp7_note.string.max(1) as u8,
-                                                fret: gp7_note.fret as i8,
+                                                string: our_string,
+                                                fret,
                                                 velocity: 95,
                                                 note_type,
                                                 effects: Vec::new(),
@@ -463,10 +485,12 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                                                 note.effects.push(NoteEffect::HammerOnPullOff(HammerOnPullOff::HammerOn)); // 统配为 HammerOn
                                             }
 
-                                            note.midi_note = track_objects[track_idx]
-                                                .tuning
-                                                .midi_note(note.string, note.fret)
-                                                .unwrap_or(0);
+                                            note.midi_note = gp7_note.midi.unwrap_or_else(|| {
+                                                track_objects[track_idx]
+                                                    .tuning
+                                                    .midi_note(note.string, note.fret)
+                                                    .unwrap_or(0)
+                                            });
                                             beat.notes.push(note);
                                         }
                                     }
@@ -487,16 +511,95 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
         song.master_bars.push(MasterBar::default());
     }
 
+    // 从 MasterTrack Automations 读取 Tempo（GPIF: <Value>120 2</Value>）
+    apply_gp7_tempo_automations(&doc, &mut song);
+
+    // 若仍无速度：取首个 MasterBar.tempo，否则保持默认
+    if song.tempo == 120 {
+        if let Some(bpm) = song.master_bars.iter().find_map(|mb| mb.tempo) {
+            if bpm > 0 {
+                song.tempo = bpm;
+            }
+        }
+    }
+
     song.tracks = track_objects;
 
     Ok(song)
 }
 
+/// 解析 MasterTrack 速度自动化，写入 `song.tempo` 与对应小节的 `MasterBar.tempo`
+fn apply_gp7_tempo_automations(doc: &Document, song: &mut Song) {
+    let Some(mt) = doc.descendants().find(|n| n.has_tag_name("MasterTrack")) else {
+        return;
+    };
+    let Some(autos) = mt.children().find(|n| n.has_tag_name("Automations")) else {
+        return;
+    };
+
+    let mut first_bpm: Option<u16> = None;
+    for auto in autos.children().filter(|n| n.has_tag_name("Automation")) {
+        let is_tempo = auto
+            .children()
+            .find(|n| n.has_tag_name("Type"))
+            .and_then(|n| n.text())
+            .map(|t| t.trim() == "Tempo")
+            .unwrap_or(false);
+        if !is_tempo {
+            continue;
+        }
+        let bpm = auto
+            .children()
+            .find(|n| n.has_tag_name("Value"))
+            .and_then(|n| n.text())
+            .and_then(|t| t.trim().split_whitespace().next()?.parse::<u16>().ok())
+            .filter(|b| *b > 0);
+        let Some(bpm) = bpm else {
+            continue;
+        };
+        let bar = auto
+            .children()
+            .find(|n| n.has_tag_name("Bar"))
+            .and_then(|n| n.text())
+            .and_then(|t| t.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+
+        if first_bpm.is_none() {
+            first_bpm = Some(bpm);
+        }
+        if let Some(mb) = song.master_bars.get_mut(bar) {
+            mb.tempo = Some(bpm);
+        }
+    }
+    if let Some(bpm) = first_bpm {
+        song.tempo = bpm;
+    }
+}
+
 fn xml_child_u8(node: Node<'_, '_>, tag: &str) -> Option<u8> {
-    node.children()
-        .find(|n| n.has_tag_name(tag))
-        .and_then(|n| n.text())
-        .and_then(|t| t.trim().parse().ok())
+    xml_child_text(node, tag).and_then(|t| t.parse().ok())
+}
+
+/// 合并元素下全部文本/CDATA 并 trim。
+/// GPIF 常写成 `<Name>\n<![CDATA[Lead Guitar]]>\n</Name>`，`.text()` 只会拿到首个空白文本节点。
+fn xml_text_content(node: Node<'_, '_>) -> String {
+    let mut out = String::new();
+    for child in node.children() {
+        if let Some(t) = child.text() {
+            out.push_str(t);
+        }
+    }
+    out.trim().to_string()
+}
+
+fn xml_child_text(node: Node<'_, '_>, tag: &str) -> Option<String> {
+    let child = node.children().find(|n| n.has_tag_name(tag))?;
+    let text = xml_text_content(child);
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
 }
 
 /// 从 Track 的 Sounds/Sound/MIDI 与 MidiConnection 写入 GM program / bank / channel。
@@ -541,6 +644,17 @@ mod tests {
         };
         let song = parse_score_gpif(&xml).expect("Failed to parse GPIF");
         assert!(!song.tracks.is_empty());
+        assert_eq!(song.tempo, 200, "应从 MasterTrack Tempo 自动化读取 BPM");
+        assert_eq!(song.display_tempo(), 200);
+        assert_eq!(song.info.title.trim(), "メタンハイドレート");
+        assert_eq!(song.info.artist.trim(), "文藝天国");
+        assert_eq!(song.tracks[0].name, "Lead Guitar");
+        if song.tracks.len() >= 5 {
+            assert_eq!(song.tracks[1].name, "Rhythm Guitar");
+            assert_eq!(song.tracks[2].name, "Electric Bass (finger)");
+            assert_eq!(song.tracks[3].name, "Drums");
+            assert_eq!(song.tracks[4].name, "Vocals");
+        }
         if song.tracks.len() >= 3 {
             assert_eq!(song.tracks[0].midi_program, 30, "Lead Guitar 应为 Distortion Guitar");
             assert_eq!(song.tracks[2].midi_program, 33, "贝斯轨应使用文件内 GM 33");
@@ -549,5 +663,71 @@ mod tests {
             assert_eq!(drums.midi_program, 0);
             assert_eq!(drums.midi_channel, 9);
         }
+    }
+
+    #[test]
+    fn test_gpif_string_order_and_midi_pitch() {
+        let xml_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../scratch/score.gpif");
+        let Ok(xml) = std::fs::read_to_string(xml_path) else {
+            return;
+        };
+        let song = parse_score_gpif(&xml).expect("Failed to parse GPIF");
+        let lead = &song.tracks[0];
+        // 弦 1 = 最高音 E4(64)，弦 6 = 最低音 E2(40)
+        assert_eq!(lead.tuning.strings[0].number, 1);
+        assert_eq!(lead.tuning.strings[0].tuning, 64);
+        assert_eq!(lead.tuning.strings.last().unwrap().tuning, 40);
+
+        // 找到 Fret=6 且 Midi=70 的音符（GPIF Note0: String5→弦1）
+        let mut found = None;
+        for m in &lead.measures {
+            for v in &m.voices {
+                for b in &v.beats {
+                    for n in &b.notes {
+                        if n.fret == 6 && n.midi_note == 70 {
+                            found = Some(n.clone());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        let n0 = found.expect("应找到 Midi=70 Fret=6 的音符");
+        assert_eq!(n0.string, 1, "高音弦应映射到弦 1（谱面最上）");
+        assert_eq!(lead.tuning.midi_note(n0.string, n0.fret), Some(70));
+
+        // 低音弦空弦：GPIF String=0 Fret=0 Midi=40 → 弦 6
+        let mut low = None;
+        for m in &lead.measures {
+            for v in &m.voices {
+                for b in &v.beats {
+                    for n in &b.notes {
+                        if n.fret == 0 && n.midi_note == 40 {
+                            low = Some(n.clone());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        let low = low.expect("应找到低音 E2 空弦");
+        assert_eq!(low.string, 6);
+    }
+
+    #[test]
+    fn test_xml_text_content_joins_cdata_after_whitespace() {
+        let xml = r#"<?xml version="1.0"?><Root><Name>
+        <![CDATA[Lead Guitar]]>
+      </Name><Empty>
+        <![CDATA[]]>
+      </Empty></Root>"#;
+        let doc = Document::parse(xml).unwrap();
+        let name = doc.descendants().find(|n| n.has_tag_name("Name")).unwrap();
+        // 合并全部文本节点并 trim，兼容仅空白 + CDATA 的 GPIF 写法
+        assert_eq!(xml_text_content(name), "Lead Guitar");
+        let empty = doc.descendants().find(|n| n.has_tag_name("Empty")).unwrap();
+        assert_eq!(xml_text_content(empty), "");
+        assert!(xml_child_text(doc.root_element(), "Name").as_deref() == Some("Lead Guitar"));
+        assert!(xml_child_text(doc.root_element(), "Empty").is_none());
     }
 }

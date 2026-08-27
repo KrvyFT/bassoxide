@@ -6,7 +6,7 @@ use bassoxide_layout::spacing::LayoutSettings;
 
 use crate::colors::Theme;
 
-/// 绘制六线谱 (Tab) 的水平弦线
+/// 绘制六线谱 (Tab) 的水平弦线（位于 note_pad 之内，保证音符∈谱表）
 pub fn draw_tab_staff(
     painter: &Painter,
     x: f32,
@@ -17,9 +17,10 @@ pub fn draw_tab_staff(
     theme: &Theme,
 ) {
     let stroke = Stroke::new(1.0_f32, theme.staff_line);
+    let pad = settings.note_pad();
 
     for s in 0..string_count {
-        let line_y = y + s as f32 * settings.tab_string_spacing;
+        let line_y = y + pad + s as f32 * settings.tab_string_spacing;
         painter.line_segment(
             [Pos2::new(x, line_y), Pos2::new(x + width, line_y)],
             stroke,
@@ -27,7 +28,7 @@ pub fn draw_tab_staff(
     }
 }
 
-/// 绘制五线谱 (Standard) 的五根水平线
+/// 绘制五线谱 (Standard) 的五根水平线（位于 ledger_pad 之内）
 pub fn draw_standard_staff(
     painter: &Painter,
     x: f32,
@@ -38,9 +39,10 @@ pub fn draw_standard_staff(
 ) {
     let stroke = Stroke::new(1.0_f32, theme.staff_line);
     let line_spacing = settings.staff_line_spacing;
+    let pad = settings.ledger_pad();
 
     for s in 0..5 {
-        let line_y = y + s as f32 * line_spacing;
+        let line_y = y + pad + s as f32 * line_spacing;
         painter.line_segment(
             [Pos2::new(x, line_y), Pos2::new(x + width, line_y)],
             stroke,

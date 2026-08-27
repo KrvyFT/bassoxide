@@ -78,6 +78,41 @@ impl BassoxideApp {
         }
     }
 
+    fn add_audio_track(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter(
+                "Audio",
+                &["wav", "flac", "mp3", "ogg", "m4a", "aac", "aiff", "aif"],
+            )
+            .add_filter("All", &["*"])
+            .pick_file()
+        {
+            self.load_audio_path(&path);
+        }
+    }
+
+    pub fn load_audio_path(&mut self, path: &std::path::Path) {
+        match crate::ui::audio_track::AudioTrack::load(path, self.state.song.as_ref()) {
+            Ok(track) => {
+                if let Some(player) = &self.state.audio_player {
+                    player.set_audio(track.samples.clone(), track.sample_rate);
+                    player.set_sync_offset(track.sync_offset_secs);
+                }
+                self.state.status_message = format!(
+                    "已加载音频: {} | {:.1}s | 检测 {:.1} BPM | {} 小节线",
+                    track.path,
+                    track.duration_secs,
+                    track.analysis.bpm,
+                    track.analysis.measure_times.len()
+                );
+                self.state.audio_track = Some(track);
+            }
+            Err(e) => {
+                self.state.status_message = format!("音频加载失败: {e}");
+            }
+        }
+    }
+
     /// 从路径加载乐谱
     pub fn open_path(&mut self, path: &std::path::Path) {
         let path_str = path.display().to_string();
@@ -105,6 +140,23 @@ impl eframe::App for BassoxideApp {
         if ctx.input(|i| i.key_pressed(egui::Key::O) && i.modifiers.command) {
             self.open_file();
         }
+        if !ctx.wants_keyboard_input()
+            && ctx.input(|i| i.key_pressed(egui::Key::T) && i.modifiers.command)
+        {
+            self.state.tuning_editor_open = !self.state.tuning_editor_open;
+            if self.state.tuning_editor_open {
+                self.state.status_message = "打开六线谱调弦".into();
+            }
+        }
+        // 空格：播放 / 暂停（有音频轨且未在输入框中时）
+        if !ctx.wants_keyboard_input()
+            && ctx.input(|i| i.key_pressed(egui::Key::Space))
+            && self.state.audio_track.is_some()
+        {
+            if let Some(player) = &self.state.audio_player {
+                player.toggle_play_pause();
+            }
+        }
 
         // 更新可用宽度
         let available_width = ctx.screen_rect().width();
@@ -128,6 +180,7 @@ impl eframe::App for BassoxideApp {
                 let action = menu_bar::menu_bar(ui, &self.state);
                 match action {
                     menu_bar::MenuAction::OpenFile => self.open_file(),
+                    menu_bar::MenuAction::AddAudioTrack => self.add_audio_track(),
                     menu_bar::MenuAction::Quit => {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
@@ -160,24 +213,43 @@ impl eframe::App for BassoxideApp {
                 transport::transport_bar(ui, &mut self.state);
             });
 
-        // 底部：混音台 + 状态栏作为整体
-        egui::TopBottomPanel::bottom("mixer_bottom")
-            .resizable(true)
-            .default_height(220.0)
+        // 底部整体：音频同步轨 + 轨道（贴边、无圆角；固定高度避免鼠标误触拉伸上移）
+        egui::TopBottomPanel::bottom("bottom_dock_fixed")
+            .resizable(false)
+            .exact_height(360.0)
+            .show_separator_line(true)
             .frame(
-                egui::Frame::side_top_panel(&ctx.style())
+                egui::Frame::NONE
                     .fill(palette.surface_container)
-                    .inner_margin(egui::Margin::symmetric(12, 10))
-                    .corner_radius(egui::CornerRadius {
-                        nw: 16,
-                        ne: 16,
-                        sw: 0,
-                        se: 0,
-                    }),
+                    .inner_margin(egui::Margin {
+                        left: 10,
+                        right: 10,
+                        top: 12,
+                        bottom: 6,
+                    })
+                    .outer_margin(egui::Margin::ZERO)
+                    .corner_radius(egui::CornerRadius::ZERO)
+                    .shadow(egui::epaint::Shadow::NONE)
+                    .stroke(egui::Stroke::NONE),
             )
             .show(ctx, |ui| {
+                // 与谱面区留白；内容按自然高度堆叠，避免比例分配随 hover 抖动
+                ui.add_space(6.0);
+                crate::ui::audio_track::audio_track_panel(ui, &mut self.state);
+                ui.add_space(4.0);
+                ui.separator();
+                ui.add_space(2.0);
                 crate::ui::timeline::timeline_panel(ui, &mut self.state);
             });
+
+        // 播放：有声卡时由音频回调推进时间；无声卡时用帧 dt 推进。始终请求重绘以刷新播放头。
+        if let Some(player) = &self.state.audio_player {
+            if player.status() == bassoxide_audio::PlaybackStatus::Playing {
+                let dt = ctx.input(|i| i.stable_dt) as f64;
+                player.tick(dt);
+                ctx.request_repaint();
+            }
+        }
 
         // 主内容区：Material You surface 衬底
         egui::CentralPanel::default()
@@ -196,5 +268,8 @@ impl eframe::App for BassoxideApp {
                 self.state.settings_open = false;
             }
         }
+
+        // 六线谱调弦配置
+        crate::ui::toolbar::tuning_editor_window(ctx, &mut self.state);
     }
 }

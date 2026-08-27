@@ -25,7 +25,7 @@ impl<'a> ScorePainter<'a> {
         Self { settings, theme }
     }
 
-    /// 绘制完整乐谱
+    /// 绘制完整乐谱（按页裁剪，保证谱表墨迹不画到纸外）
     pub fn paint(
         &self,
         painter: &Painter,
@@ -33,135 +33,84 @@ impl<'a> ScorePainter<'a> {
         layout: &LayoutResult,
         offset: egui::Vec2,
     ) {
-        // 0. 先绘制 A4 白色页面
+        // 0. 先绘制白色页面
         self.draw_pages(painter, layout, offset);
 
         for system in &layout.systems {
-            let staff_x = system.content_left + offset.x;
-            let system_width = system.content_width;
+            let page = layout
+                .pages
+                .get(system.page_index)
+                .or_else(|| layout.pages.first());
+            let clip = page.map(|p| {
+                Rect::from_min_size(
+                    Pos2::new(p.x + offset.x, p.y + offset.y),
+                    Vec2::new(p.width, p.height),
+                )
+            });
 
-            for staff in &system.staves {
-                let track_idx = staff.track_index;
-                let staff_y = system.y + staff.y + offset.y;
+            let paint_system = |painter: &Painter| {
+                let staff_x = system.content_left + offset.x;
+                let system_width = system.content_width;
 
-                let track = match song.tracks.get(track_idx) {
-                    Some(t) => t,
-                    None => continue,
-                };
+                for staff in &system.staves {
+                    let track_idx = staff.track_index;
+                    let staff_y = system.y + staff.y + offset.y;
 
-                match staff.staff_type {
-                    bassoxide_layout::staff::StaffType::Standard => {
-                        staff_render::draw_standard_staff(
-                            painter, staff_x, staff_y, system_width, self.settings, self.theme,
-                        );
-                    }
-                    bassoxide_layout::staff::StaffType::Tablature => {
-                        staff_render::draw_tab_staff(
-                            painter,
-                            staff_x,
-                            staff_y,
-                            system_width,
-                            staff.string_count,
-                            self.settings,
-                            self.theme,
-                        );
-                        staff_render::draw_tab_clef(
-                            painter,
-                            staff_x,
-                            staff_y,
-                            staff.string_count,
-                            self.settings,
-                            self.theme,
-                        );
-                    }
-                    _ => {}
-                }
+                    let track = match song.tracks.get(track_idx) {
+                        Some(t) => t,
+                        None => continue,
+                    };
 
-                // 绘制该行开头的拍号（五线谱与 Tab 均显示）
-                if let Some(first_mp) = system.measure_positions.first() {
-                    if let Some(master_bar) = song.master_bar(first_mp.measure_index) {
-                        let ts = &master_bar.time_signature;
-                        let denom_num = note_value_to_num(ts.denominator);
-
-                        if matches!(
-                            staff.staff_type,
-                            bassoxide_layout::staff::StaffType::Tablature
-                                | bassoxide_layout::staff::StaffType::Standard
-                        ) {
-                            staff_render::draw_time_signature(
+                    match staff.staff_type {
+                        bassoxide_layout::staff::StaffType::Standard => {
+                            staff_render::draw_standard_staff(
                                 painter,
-                                staff_x + self.settings.clef_width + 14.0,
+                                staff_x,
                                 staff_y,
-                                ts.numerator,
-                                denom_num,
-                                staff.height,
+                                system_width,
                                 self.settings,
                                 self.theme,
                             );
                         }
+                        bassoxide_layout::staff::StaffType::Tablature => {
+                            staff_render::draw_tab_staff(
+                                painter,
+                                staff_x,
+                                staff_y,
+                                system_width,
+                                staff.string_count,
+                                self.settings,
+                                self.theme,
+                            );
+                            staff_render::draw_tab_clef(
+                                painter,
+                                staff_x,
+                                staff_y,
+                                staff.string_count,
+                                self.settings,
+                                self.theme,
+                            );
+                        }
+                        _ => {}
                     }
-                }
 
-                // 绘制每个小节的内容
-                for measure_pos in &system.measure_positions {
-                    let m = measure_pos.measure_index;
-                    let measure_x = measure_pos.x + offset.x;
+                    if let Some(first_mp) = system.measure_positions.first() {
+                        if let Some(master_bar) = song.master_bar(first_mp.measure_index) {
+                            let ts = &master_bar.time_signature;
+                            let denom_num = note_value_to_num(ts.denominator);
 
-                    staff_render::draw_bar_line(
-                        painter,
-                        measure_x + measure_pos.width,
-                        staff_y,
-                        staff.height,
-                        self.theme,
-                    );
-
-                    if let Some(measure) = track.measures.get(m) {
-                        let voice = measure.primary_voice();
-                        if let Some(beat_positions) = layout
-                            .beat_positions
-                            .get(m)
-                            .and_then(|tracks| tracks.get(track_idx))
-                        {
-                            for bp in beat_positions {
-                                if let Some(beat) = voice.beats.get(bp.beat_index) {
-                                    let beat_x = measure_x + bp.x;
-
-                                    if beat.is_empty() {
-                                        if staff.staff_type
-                                            == bassoxide_layout::staff::StaffType::Tablature
-                                        {
-                                            note_render::draw_rest(
-                                                painter,
-                                                beat_x,
-                                                staff_y,
-                                                staff.height,
-                                                self.theme,
-                                            );
-                                        }
-                                    } else {
-                                        for note in &beat.notes {
-                                            self.paint_note(painter, staff, note, beat_x, staff_y, track);
-                                        }
-                                    }
-                                }
-                            }
-
-                            // 六线谱：在小节下方绘制节奏符杆
-                            if staff.staff_type == bassoxide_layout::staff::StaffType::Tablature {
-                                let rhythm_beats: Vec<RhythmBeat> = beat_positions
-                                    .iter()
-                                    .filter_map(|bp| {
-                                        voice.beats.get(bp.beat_index).map(|beat| RhythmBeat {
-                                            x: measure_x + bp.x,
-                                            beat,
-                                        })
-                                    })
-                                    .collect();
-                                let baseline_y = staff_y + staff.height + 6.0;
-                                rhythm_render::draw_measure_rhythm(
+                            if matches!(
+                                staff.staff_type,
+                                bassoxide_layout::staff::StaffType::Tablature
+                                    | bassoxide_layout::staff::StaffType::Standard
+                            ) {
+                                staff_render::draw_time_signature(
                                     painter,
-                                    &rhythm_beats,
-                                    baseline_y,
+                                    staff_x + self.settings.clef_width + 14.0,
+                                    staff_y,
+                                    ts.numerator,
+                                    denom_num,
+                                    staff.height,
                                     self.settings,
                                     self.theme,
                                 );
@@ -169,22 +118,89 @@ impl<'a> ScorePainter<'a> {
                         }
                     }
 
-                    // 排练标记
-                    if staff.staff_type == bassoxide_layout::staff::StaffType::Tablature {
-                        if let Some(master_bar) = song.master_bar(m) {
-                            if let Some(marker) = &master_bar.marker {
-                                let font = egui::FontId::new(11.0, egui::FontFamily::Proportional);
-                                painter.text(
-                                    Pos2::new(measure_x + 4.0, staff_y - 14.0),
-                                    egui::Align2::LEFT_BOTTOM,
-                                    &marker.name,
-                                    font,
-                                    self.theme.marker_color,
-                                );
+                    for measure_pos in &system.measure_positions {
+                        let m = measure_pos.measure_index;
+                        let measure_x = measure_pos.x + offset.x;
+
+                        staff_render::draw_bar_line(
+                            painter,
+                            measure_x + measure_pos.width,
+                            staff_y,
+                            staff.height,
+                            self.theme,
+                        );
+
+                        if let Some(measure) = track.measures.get(m) {
+                            let voice = measure.primary_voice();
+                            if let Some(beat_positions) = layout
+                                .beat_positions
+                                .get(m)
+                                .and_then(|tracks| tracks.get(track_idx))
+                            {
+                                for bp in beat_positions {
+                                    if let Some(beat) = voice.beats.get(bp.beat_index) {
+                                        let beat_x = measure_x + bp.x;
+
+                                        if !beat.is_empty() {
+                                            for note in &beat.notes {
+                                                self.paint_note(
+                                                    painter, staff, note, beat_x, staff_y, track,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if staff.staff_type
+                                    == bassoxide_layout::staff::StaffType::Tablature
+                                {
+                                    let rhythm_beats: Vec<RhythmBeat> = beat_positions
+                                        .iter()
+                                        .filter_map(|bp| {
+                                            voice.beats.get(bp.beat_index).map(|beat| RhythmBeat {
+                                                x: measure_x + bp.x,
+                                                beat,
+                                            })
+                                        })
+                                        .collect();
+                                    // 符杆画在谱表带下方预留区内
+                                    let baseline_y = staff_y + staff.height + 2.0;
+                                    rhythm_render::draw_measure_rhythm(
+                                        painter,
+                                        &rhythm_beats,
+                                        baseline_y,
+                                        measure_pos.width,
+                                        self.settings,
+                                        self.theme,
+                                    );
+                                }
+                            }
+                        }
+
+                        if staff.staff_type == bassoxide_layout::staff::StaffType::Tablature {
+                            if let Some(master_bar) = song.master_bar(m) {
+                                if let Some(marker) = &master_bar.marker {
+                                    let font =
+                                        egui::FontId::new(11.0, egui::FontFamily::Proportional);
+                                    painter.text(
+                                        Pos2::new(measure_x + 4.0, staff_y + 2.0),
+                                        egui::Align2::LEFT_TOP,
+                                        &marker.name,
+                                        font,
+                                        self.theme.marker_color,
+                                    );
+                                }
                             }
                         }
                     }
                 }
+            };
+
+            if let Some(clip_rect) = clip {
+                let clipped = painter.with_clip_rect(clip_rect);
+                paint_system(&clipped);
+            } else {
+                paint_system(painter);
             }
         }
     }
@@ -207,32 +223,73 @@ impl<'a> ScorePainter<'a> {
             }
             bassoxide_layout::staff::StaffType::Tablature => {
                 note_render::draw_tab_note(
-                    painter, note, beat_x, staff_y, self.settings, self.theme, false,
+                    painter,
+                    note,
+                    beat_x,
+                    staff_y,
+                    staff.string_count,
+                    self.settings,
+                    self.theme,
+                    false,
                 );
 
                 let string_y = staff_y
-                    + bassoxide_layout::tablature::string_y_offset(note.string, self.settings);
+                    + bassoxide_layout::tablature::string_y_offset(
+                        note.string,
+                        staff.string_count,
+                        self.settings,
+                    );
                 for effect in &note.effects {
                     match effect {
                         bassoxide_core::effects::NoteEffect::Bend(bend) => {
                             crate::effect_render::draw_bend(painter, bend, beat_x, string_y, self.theme);
                         }
                         bassoxide_core::effects::NoteEffect::Harmonic(harm) => {
-                            crate::effect_render::draw_harmonic(painter, harm, beat_x, string_y, self.theme);
+                            crate::effect_render::draw_harmonic(
+                                painter, harm, beat_x, string_y, self.theme,
+                            );
                         }
                         bassoxide_core::effects::NoteEffect::Vibrato(_, _) => {
-                            crate::effect_render::draw_vibrato(painter, beat_x, staff_y - 10.0, 20.0, self.theme);
+                            crate::effect_render::draw_vibrato(
+                                painter,
+                                beat_x,
+                                staff_y + self.settings.note_pad() * 0.2,
+                                20.0,
+                                self.theme,
+                            );
                         }
                         bassoxide_core::effects::NoteEffect::Slide(s) => {
                             if !s.is_empty() {
-                                crate::effect_render::draw_slide(painter, &s[0], beat_x, string_y, beat_x + 30.0, string_y, self.theme);
+                                crate::effect_render::draw_slide(
+                                    painter,
+                                    &s[0],
+                                    beat_x,
+                                    string_y,
+                                    beat_x + 30.0,
+                                    string_y,
+                                    self.theme,
+                                );
                             }
                         }
                         bassoxide_core::effects::NoteEffect::LetRing => {
-                            crate::effect_render::draw_text_line(painter, "Let Ring", beat_x, staff_y + staff.height + 10.0, 30.0, self.theme);
+                            crate::effect_render::draw_text_line(
+                                painter,
+                                "Let Ring",
+                                beat_x,
+                                staff_y + staff.height + 4.0,
+                                30.0,
+                                self.theme,
+                            );
                         }
                         bassoxide_core::effects::NoteEffect::PalmMute => {
-                            crate::effect_render::draw_text_line(painter, "P.M.", beat_x, staff_y + staff.height + 10.0, 30.0, self.theme);
+                            crate::effect_render::draw_text_line(
+                                painter,
+                                "P.M.",
+                                beat_x,
+                                staff_y + staff.height + 4.0,
+                                30.0,
+                                self.theme,
+                            );
                         }
                         _ => {}
                     }
