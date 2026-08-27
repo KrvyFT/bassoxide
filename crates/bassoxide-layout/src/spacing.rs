@@ -1,5 +1,7 @@
 //! 间距常量与计算工具。
 
+use crate::page::PaperSize;
+
 /// 布局参数（可调节的全局排版常量）
 #[derive(Debug, Clone)]
 pub struct LayoutSettings {
@@ -27,9 +29,9 @@ pub struct LayoutSettings {
     pub clef_width: f32,
     /// 拍号区域宽度 (px)
     pub time_sig_width: f32,
-    /// A4 页面宽度 (px)
+    /// 页面宽度 (px)
     pub page_width: f32,
-    /// A4 页面高度 (px)
+    /// 页面高度 (px)
     pub page_height: f32,
     /// 页面内边距 (px)
     pub page_margin: f32,
@@ -37,10 +39,16 @@ pub struct LayoutSettings {
     pub rhythm_height: f32,
     /// 每行小节数：0 = 按页宽自动换行，否则强制每行 N 小节
     pub measures_per_line: u8,
+    /// 当前纸张（用于相对 A4 的内容缩放）
+    pub paper_size: PaperSize,
+    /// 相对 A4 的内容缩放（音符/符杆/最小小节间距）
+    pub content_scale: f32,
 }
 
 impl Default for LayoutSettings {
     fn default() -> Self {
+        let paper = PaperSize::A4;
+        let (page_width, page_height) = paper.size_px();
         Self {
             tab_string_spacing: 10.0,
             staff_line_spacing: 10.0,
@@ -54,12 +62,13 @@ impl Default for LayoutSettings {
             tab_font_size: 13.0,
             clef_width: 30.0,
             time_sig_width: 28.0,
-            // A4 纵向 210×297mm，约 96dpi 下 794×1123 px
-            page_width: 794.0,
-            page_height: 1123.0,
+            page_width,
+            page_height,
             page_margin: 48.0,
             rhythm_height: 26.0,
             measures_per_line: 4,
+            paper_size: paper,
+            content_scale: 1.0,
         }
     }
 }
@@ -75,13 +84,18 @@ impl LayoutSettings {
         self.staff_line_spacing * 4.0
     }
 
-    /// A4 页面可用内容宽度
+    /// 页面可用内容宽度
     pub fn page_content_width(&self) -> f32 {
         (self.page_width - self.page_margin * 2.0).max(50.0)
     }
 
-    /// A4 页面可用内容高度
+    /// 页面可用内容高度
     pub fn page_content_height(&self) -> f32 {
         (self.page_height - self.page_margin * 2.0).max(50.0)
+    }
+
+    /// 参考节拍间距（用于符杆按小节密度缩放）
+    pub fn reference_beat_gap(&self) -> f32 {
+        self.min_beat_spacing.max(8.0)
     }
 }

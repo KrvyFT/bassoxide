@@ -80,6 +80,24 @@ fn score_settings_form(
 ) {
     let prefs = &mut state.score_prefs;
 
+    ui.label(egui::RichText::new("纸张大小").color(palette.on_surface));
+    ui.horizontal_wrapped(|ui| {
+        for size in bassoxide_layout::PaperSize::ALL {
+            let selected = prefs.paper_size == size;
+            let label = format!("{} ({})", size.label(), size.description());
+            if ui.selectable_label(selected, label).clicked() && !selected {
+                prefs.paper_size = size;
+                *changed = true;
+            }
+        }
+    });
+    ui.label(
+        egui::RichText::new("小节宽度、音符与符杆随纸张相对 A4 自动缩放")
+            .size(11.0)
+            .color(palette.on_surface_variant),
+    );
+    ui.add_space(8.0);
+
     ui.label(egui::RichText::new("字体大小").color(palette.on_surface));
     if ui
         .add(egui::Slider::new(&mut prefs.font_size, 8.0..=28.0).suffix(" px"))

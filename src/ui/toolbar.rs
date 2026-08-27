@@ -82,6 +82,30 @@ pub fn toolbar(ui: &mut Ui, state: &mut AppState) {
 
             ui.separator();
 
+            // 纸张大小（小节/符杆随纸张自适应）
+            ui.label(
+                egui::RichText::new("纸张:")
+                    .color(palette.on_surface_variant),
+            );
+            egui::ComboBox::from_id_salt("toolbar_paper_size")
+                .selected_text(state.score_prefs.paper_size.label())
+                .width(72.0)
+                .show_ui(ui, |ui| {
+                    for size in bassoxide_layout::PaperSize::ALL {
+                        let sel = state.score_prefs.paper_size == size;
+                        if ui
+                            .selectable_label(sel, format!("{} {}", size.label(), size.description()))
+                            .clicked()
+                            && !sel
+                        {
+                            state.score_prefs.paper_size = size;
+                            state.apply_score_prefs();
+                        }
+                    }
+                });
+
+            ui.separator();
+
             // 乐谱种类（作用于当前选中轨道）
             ui.label(
                 egui::RichText::new("乐谱种类:")

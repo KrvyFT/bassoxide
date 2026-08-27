@@ -385,6 +385,7 @@ mod tests {
     use bassoxide_core::song::{Song, SongInfo};
     use bassoxide_core::track::{StaffDisplay, Track, Tuning};
     use bassoxide_core::types::Duration;
+    use crate::PaperSize;
 
     fn sample_song(measures: usize) -> Song {
         let mut song = Song {
@@ -478,6 +479,49 @@ mod tests {
         // 行间距使用完整 system_gap，同页多行时应能自动分页
         assert!(layout.pages.len() >= 1);
         assert_eq!(layout.systems.len(), 2, "8 measures / 4 per line => 2 systems");
+    }
+
+    #[test]
+    fn paper_size_scales_page_and_measure_width() {
+        let mut a4 = LayoutSettings::default();
+        a4.paper_size = PaperSize::A4;
+        a4.content_scale = PaperSize::A4.content_scale();
+        let (w4, h4) = PaperSize::A4.size_px();
+        a4.page_width = w4;
+        a4.page_height = h4;
+
+        let mut a5 = a4.clone();
+        a5.paper_size = PaperSize::A5;
+        a5.content_scale = PaperSize::A5.content_scale();
+        let (w5, h5) = PaperSize::A5.size_px();
+        a5.page_width = w5;
+        a5.page_height = h5;
+        a5.min_measure_width *= a5.content_scale;
+        a5.min_beat_spacing *= a5.content_scale;
+
+        let song = sample_song(4);
+        let layout_a4 = LayoutEngine::new(a4.clone())
+            .with_selected_track(0)
+            .layout(&song);
+        let layout_a5 = LayoutEngine::new(a5.clone())
+            .with_selected_track(0)
+            .layout(&song);
+
+        assert!((layout_a4.page_width - w4).abs() < 1.0);
+        assert!((layout_a5.page_width - w5).abs() < 1.0);
+        assert!(layout_a5.page_width < layout_a4.page_width);
+
+        let sum_a4: f32 = layout_a4.systems[0]
+            .measure_positions
+            .iter()
+            .map(|m| m.width)
+            .sum();
+        let sum_a5: f32 = layout_a5.systems[0]
+            .measure_positions
+            .iter()
+            .map(|m| m.width)
+            .sum();
+        assert!(sum_a5 < sum_a4, "a5={sum_a5} a4={sum_a4}");
     }
 
     #[test]

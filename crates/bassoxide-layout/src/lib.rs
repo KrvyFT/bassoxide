@@ -12,3 +12,4 @@ pub mod system;
 pub mod tablature;
 
 pub use engine::{LayoutEngine, LayoutResult};
+pub use page::PaperSize;

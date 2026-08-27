@@ -132,13 +132,14 @@ pub fn draw_standard_note(
     let is_stem_up = offset < 2.0;
     let stem_x = if is_stem_up { x + radius.x } else { x - radius.x };
     let stem_dir = if is_stem_up { -1.0 } else { 1.0 };
-    // 符干长度大约跨越 3.5 个线间距
-    let stem_length = 3.5 * line_spacing;
+    // 符干长度随线距（已含纸张缩放）变化，略压缩以适配较窄小节
+    let stem_length = 3.2 * line_spacing;
     let stem_y_end = note_y + stem_dir * stem_length;
-    
+    let stem_w = (line_spacing * 0.12).clamp(0.8, 2.0);
+
     painter.line_segment(
         [Pos2::new(stem_x, note_y), Pos2::new(stem_x, stem_y_end)],
-        egui::Stroke::new(1.2_f32, theme.note_text),
+        egui::Stroke::new(stem_w, theme.note_text),
     );
 }
 

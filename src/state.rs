@@ -5,6 +5,7 @@ use std::sync::Arc;
 use bassoxide_core::song::Song;
 use bassoxide_layout::engine::{LayoutEngine, LayoutResult};
 use bassoxide_layout::spacing::LayoutSettings;
+use bassoxide_layout::PaperSize;
 use bassoxide_render::Theme;
 
 use crate::ui::audio_track::AudioTrack;
@@ -19,7 +20,7 @@ pub struct CursorPosition {
     pub string: usize,
 }
 
-/// 用户可调的谱面偏好（缩放前的基准值）
+/// 用户可调的谱面偏好（缩放前的基准值，以 A4 为参考）
 #[derive(Debug, Clone)]
 pub struct ScorePrefs {
     pub font_size: f32,
@@ -27,6 +28,7 @@ pub struct ScorePrefs {
     pub row_spacing: f32,
     /// 0 = 自动
     pub measures_per_line: u8,
+    pub paper_size: PaperSize,
 }
 
 impl Default for ScorePrefs {
@@ -36,6 +38,7 @@ impl Default for ScorePrefs {
             line_spacing: 10.0,
             row_spacing: 80.0,
             measures_per_line: 4,
+            paper_size: PaperSize::A4,
         }
     }
 }
@@ -116,31 +119,39 @@ impl Default for AppState {
 }
 
 impl AppState {
-    /// 将谱面偏好 × 缩放 写入 layout_settings 并标记重排
+    /// 将谱面偏好 × 纸张缩放 × 视图缩放 写入 layout_settings 并标记重排
     pub fn apply_score_prefs(&mut self) {
         let z = self.zoom_factor;
         let p = &self.score_prefs;
+        let paper = p.paper_size;
+        let (page_w, page_h) = paper.size_px();
+        // 相对 A4：小节/音符/符杆随纸张变大变小
+        let paper_s = paper.content_scale();
+        let s = paper_s * z;
         let base = LayoutSettings::default();
 
-        self.layout_settings.tab_font_size = p.font_size * z;
-        // 线间距同时作用于弦距与五线距
-        self.layout_settings.tab_string_spacing = p.line_spacing * z;
-        self.layout_settings.staff_line_spacing = p.line_spacing * z;
-        self.layout_settings.system_gap = p.row_spacing * z;
-        self.layout_settings.measures_per_line = p.measures_per_line;
-        // 符杆区域随字体大小变化
-        self.layout_settings.rhythm_height = (p.font_size * 2.0).clamp(18.0, 52.0) * z;
+        self.layout_settings.paper_size = paper;
+        self.layout_settings.content_scale = paper_s;
+        self.layout_settings.page_width = page_w * z;
+        self.layout_settings.page_height = page_h * z;
+        self.layout_settings.page_margin = (base.page_margin * s).max(24.0);
 
-        self.layout_settings.margin_top = base.margin_top * z;
-        self.layout_settings.margin_left = base.margin_left * z;
-        self.layout_settings.track_gap = base.track_gap * z;
-        self.layout_settings.min_measure_width = base.min_measure_width * z;
-        self.layout_settings.min_beat_spacing = base.min_beat_spacing * z;
-        self.layout_settings.clef_width = base.clef_width * z;
-        self.layout_settings.time_sig_width = (base.time_sig_width * z).max(24.0);
-        self.layout_settings.page_width = base.page_width * z;
-        self.layout_settings.page_height = base.page_height * z;
-        self.layout_settings.page_margin = base.page_margin * z;
+        self.layout_settings.tab_font_size = (p.font_size * s).max(7.0);
+        self.layout_settings.tab_string_spacing = (p.line_spacing * s).max(5.0);
+        self.layout_settings.staff_line_spacing = (p.line_spacing * s).max(5.0);
+        self.layout_settings.system_gap = (p.row_spacing * s).max(24.0);
+        self.layout_settings.measures_per_line = p.measures_per_line;
+        // 符杆区域随字体与纸张同步缩放
+        self.layout_settings.rhythm_height =
+            (p.font_size * 2.0 * s).clamp(12.0 * paper_s, 56.0 * paper_s.max(1.0));
+
+        self.layout_settings.margin_top = base.margin_top * s;
+        self.layout_settings.margin_left = base.margin_left * s;
+        self.layout_settings.track_gap = base.track_gap * s;
+        self.layout_settings.min_measure_width = (base.min_measure_width * s).max(40.0);
+        self.layout_settings.min_beat_spacing = (base.min_beat_spacing * s).max(10.0);
+        self.layout_settings.clef_width = (base.clef_width * s).max(16.0);
+        self.layout_settings.time_sig_width = (base.time_sig_width * s).max(16.0);
 
         self.needs_relayout = true;
     }
