@@ -7,3 +7,4 @@ description = "Score layout and typesetting engine for Bassoxide"
 [dependencies]
 bassoxide-core.workspace = true
 tracing.workspace = true
+serde.workspace = true

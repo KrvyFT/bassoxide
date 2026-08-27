@@ -33,7 +33,7 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
             ui.centered_and_justified(|ui| {
                 ui.heading(egui::RichText::new("Bassoxide").color(palette.on_surface));
                 ui.label(
-                    egui::RichText::new("按 Ctrl+O 打开 Guitar Pro 文件 (.gp5)")
+                    egui::RichText::new("按 Ctrl+O 打开乐谱 / .bso 工程")
                         .color(palette.on_surface_variant),
                 );
             });

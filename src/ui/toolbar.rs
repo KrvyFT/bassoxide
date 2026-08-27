@@ -319,3 +319,169 @@ fn apply_preset(track: &mut Track, new_tuning: Tuning) {
     track.sync_tab_string_count();
     track.staff_display.show_tab = true;
 }
+
+fn direction_label(d: bassoxide_core::Direction) -> &'static str {
+    use bassoxide_core::Direction::*;
+    match d {
+        Coda => "Coda",
+        DoubleCoda => "Double Coda",
+        Segno => "Segno",
+        SegnoSegno => "SegnoSegno",
+        Fine => "Fine",
+        DaCapo => "D.C.",
+        DaCapoAlCoda => "D.C. al Coda",
+        DaCapoAlDoubleCoda => "D.C. al Double Coda",
+        DaCapoAlFine => "D.C. al Fine",
+        DalSegno => "D.S.",
+        DalSegnoAlCoda => "D.S. al Coda",
+        DalSegnoAlDoubleCoda => "D.S. al Double Coda",
+        DalSegnoAlFine => "D.S. al Fine",
+        DalSegnoSegno => "D.S.S.",
+        DalSegnoSegnoAlCoda => "D.S.S. al Coda",
+        DalSegnoSegnoAlDoubleCoda => "D.S.S. al Double Coda",
+        DalSegnoSegnoAlFine => "D.S.S. al Fine",
+    }
+}
+
+const COMMON_DIRECTIONS: &[bassoxide_core::Direction] = &[
+    bassoxide_core::Direction::Segno,
+    bassoxide_core::Direction::Coda,
+    bassoxide_core::Direction::Fine,
+    bassoxide_core::Direction::DaCapo,
+    bassoxide_core::Direction::DalSegno,
+    bassoxide_core::Direction::DaCapoAlCoda,
+    bassoxide_core::Direction::DalSegnoAlCoda,
+    bassoxide_core::Direction::DaCapoAlFine,
+    bassoxide_core::Direction::DalSegnoAlFine,
+];
+
+/// 小节排练标记 / 段落方向编辑
+pub fn marker_editor_window(ctx: &egui::Context, state: &mut AppState) {
+    if !state.marker_editor_open {
+        return;
+    }
+    let palette = MaterialPalette::for_mode(state.is_light_theme);
+    let measure_idx = state.cursor.measure;
+    let mut close = false;
+    let mut jump_name: Option<String> = None;
+    let mut jump_dir: Option<bassoxide_core::Direction> = None;
+
+    egui::Window::new("小节标记")
+        .id(egui::Id::new("marker_editor"))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            ui.label(
+                egui::RichText::new(format!("小节 {}", measure_idx + 1))
+                    .color(palette.on_surface_variant),
+            );
+            ui.horizontal(|ui| {
+                ui.label("排练标记:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut state.marker_edit_name)
+                        .desired_width(160.0)
+                        .hint_text("如 A / Chorus"),
+                );
+            });
+
+            ui.horizontal(|ui| {
+                if ui.button("应用标记").clicked() {
+                    if let Some(song) = state.song.as_mut() {
+                        if let Some(mb) = song.master_bars.get_mut(measure_idx) {
+                            let name = state.marker_edit_name.trim().to_string();
+                            if name.is_empty() {
+                                mb.marker = None;
+                            } else {
+                                mb.marker = Some(bassoxide_core::Marker {
+                                    name,
+                                    color: bassoxide_core::types::Color::rgb(200, 120, 0),
+                                });
+                            }
+                            state.needs_relayout = true;
+                            state.status_message = "已更新小节标记".into();
+                        }
+                    }
+                }
+                if ui.button("清除标记").clicked() {
+                    state.marker_edit_name.clear();
+                    if let Some(song) = state.song.as_mut() {
+                        if let Some(mb) = song.master_bars.get_mut(measure_idx) {
+                            mb.marker = None;
+                            state.needs_relayout = true;
+                        }
+                    }
+                }
+                if ui.button("跳转到此标记").clicked() {
+                    let name = state.marker_edit_name.trim().to_string();
+                    if !name.is_empty() {
+                        jump_name = Some(name);
+                    }
+                }
+            });
+
+            ui.separator();
+            ui.label(
+                egui::RichText::new("段落方向")
+                    .color(palette.on_surface_variant),
+            );
+
+            let current_dirs: Vec<bassoxide_core::Direction> = state
+                .song
+                .as_ref()
+                .and_then(|s| s.master_bars.get(measure_idx))
+                .map(|mb| mb.directions.clone())
+                .unwrap_or_default();
+
+            ui.horizontal_wrapped(|ui| {
+                for &d in COMMON_DIRECTIONS {
+                    let on = current_dirs.contains(&d);
+                    if ui.selectable_label(on, direction_label(d)).clicked() {
+                        if let Some(song) = state.song.as_mut() {
+                            if let Some(mb) = song.master_bars.get_mut(measure_idx) {
+                                if let Some(pos) = mb.directions.iter().position(|x| *x == d) {
+                                    mb.directions.remove(pos);
+                                } else {
+                                    mb.directions.push(d);
+                                }
+                                state.needs_relayout = true;
+                            }
+                        }
+                    }
+                }
+            });
+
+            ui.horizontal(|ui| {
+                for &d in &[
+                    bassoxide_core::Direction::Segno,
+                    bassoxide_core::Direction::Coda,
+                    bassoxide_core::Direction::Fine,
+                ] {
+                    if ui
+                        .button(format!("跳转 {}", direction_label(d)))
+                        .clicked()
+                    {
+                        jump_dir = Some(d);
+                    }
+                }
+            });
+
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui.button("关闭").clicked() {
+                    close = true;
+                }
+            });
+        });
+
+    if let Some(name) = jump_name {
+        state.jump_to_marker_name(&name);
+    }
+    if let Some(d) = jump_dir {
+        state.jump_to_direction(d);
+    }
+    if close {
+        state.marker_editor_open = false;
+    }
+}
+

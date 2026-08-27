@@ -5,8 +5,8 @@ use std::sync::Arc;
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
 use bassoxide_audio::{
-    analyze_beats, compute_peaks, decode_file, default_beats_per_bar, score_timeline,
-    snap_to_nearest_beat, BeatAnalysis, ScoreTimeline,
+    analyze_beats, compute_peaks, decode_bytes, decode_file, default_beats_per_bar,
+    score_timeline, snap_to_nearest_beat, BeatAnalysis, DecodedAudio, ScoreTimeline,
 };
 
 use crate::state::AppState;
@@ -26,6 +26,10 @@ pub struct AudioTrack {
     pub pixels_per_second: f32,
     /// 视图起始谱面时间
     pub view_start_secs: f64,
+    /// 原始音频文件字节（写入 .bso 的 AUDI 块）
+    pub source_bytes: Option<Vec<u8>>,
+    /// 原始文件名提示（扩展名用于解码）
+    pub source_name: Option<String>,
 }
 
 impl AudioTrack {
@@ -33,7 +37,62 @@ impl AudioTrack {
         path: &std::path::Path,
         song: Option<&bassoxide_core::song::Song>,
     ) -> Result<Self, String> {
+        let raw = std::fs::read(path).map_err(|e| e.to_string())?;
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("audio.bin")
+            .to_string();
         let decoded = decode_file(path).map_err(|e| e.to_string())?;
+        Self::from_decoded(
+            decoded,
+            path.display().to_string(),
+            song,
+            Some(raw),
+            Some(name),
+        )
+    }
+
+    /// 从内存字节构建（.bso 内嵌 AUDI）
+    pub fn from_bytes(
+        bytes: Vec<u8>,
+        name: &str,
+        song: Option<&bassoxide_core::song::Song>,
+    ) -> Result<Self, String> {
+        let decoded = decode_bytes(&bytes, Some(name)).map_err(|e| e.to_string())?;
+        Self::from_decoded(
+            decoded,
+            name.to_string(),
+            song,
+            Some(bytes),
+            Some(name.to_string()),
+        )
+    }
+
+    /// 从 PCM 后备块构建（无原始文件时）
+    pub fn from_pcm(
+        samples: Vec<f32>,
+        sample_rate: u32,
+        song: Option<&bassoxide_core::song::Song>,
+        label: &str,
+    ) -> Result<Self, String> {
+        if samples.is_empty() || sample_rate == 0 {
+            return Err("PCM 为空".into());
+        }
+        let decoded = DecodedAudio {
+            samples,
+            sample_rate,
+        };
+        Self::from_decoded(decoded, label.to_string(), song, None, None)
+    }
+
+    fn from_decoded(
+        decoded: DecodedAudio,
+        path_label: String,
+        song: Option<&bassoxide_core::song::Song>,
+        source_bytes: Option<Vec<u8>>,
+        source_name: Option<String>,
+    ) -> Result<Self, String> {
         let samples = Arc::new(decoded.samples);
         let sample_rate = decoded.sample_rate;
         let duration_secs = samples.len() as f64 / f64::from(sample_rate.max(1));
@@ -42,7 +101,7 @@ impl AudioTrack {
         let hint = song.map(|s| f64::from(s.tempo));
         let analysis = analyze_beats(&samples, sample_rate, bpb, hint);
         Ok(Self {
-            path: path.display().to_string(),
+            path: path_label,
             samples,
             sample_rate,
             duration_secs,
@@ -51,6 +110,8 @@ impl AudioTrack {
             sync_offset_secs: 0.0,
             pixels_per_second: 80.0,
             view_start_secs: 0.0,
+            source_bytes,
+            source_name,
         })
     }
 
@@ -129,26 +190,7 @@ pub fn audio_track_panel(ui: &mut Ui, state: &mut AppState) {
     });
 
     if let Some(path) = load_path {
-        match AudioTrack::load(&path, state.song.as_ref()) {
-            Ok(track) => {
-                if let Some(player) = &state.audio_player {
-                    player.set_audio(track.samples.clone(), track.sample_rate);
-                    player.set_sync_offset(track.sync_offset_secs);
-                }
-                state.status_message = format!(
-                    "已加载音频: {} | {:.1}s | 检测 {:.1} BPM | {} 小节线",
-                    track.path,
-                    track.duration_secs,
-                    track.analysis.bpm,
-                    track.analysis.measure_times.len()
-                );
-                state.audio_track = Some(track);
-                state.sync_playback_tools_to_player();
-            }
-            Err(e) => {
-                state.status_message = format!("音频加载失败: {e}");
-            }
-        }
+        state.pending_audio_path = Some(path);
     }
     if clear {
         state.audio_track = None;

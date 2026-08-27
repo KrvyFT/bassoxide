@@ -40,6 +40,24 @@ pub fn decode_file(path: &Path) -> Result<DecodedAudio> {
         hint.with_extension(ext);
     }
 
+    decode_mss(mss, hint)
+}
+
+/// 从内存中的原始音频文件字节解码（用于 .bso 内嵌音频）
+pub fn decode_bytes(data: &[u8], file_hint: Option<&str>) -> Result<DecodedAudio> {
+    use std::io::Cursor;
+    let cursor = Cursor::new(data.to_vec());
+    let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
+    let mut hint = Hint::new();
+    if let Some(name) = file_hint {
+        if let Some(ext) = Path::new(name).extension().and_then(|e| e.to_str()) {
+            hint.with_extension(ext);
+        }
+    }
+    decode_mss(mss, hint)
+}
+
+fn decode_mss(mss: MediaSourceStream, hint: Hint) -> Result<DecodedAudio> {
     let probed = symphonia::default::get_probe()
         .format(
             &hint,

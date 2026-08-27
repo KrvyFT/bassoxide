@@ -8,7 +8,11 @@ use crate::state::AppState;
 pub enum MenuAction {
     None,
     OpenFile,
+    OpenProject,
+    SaveProject,
+    SaveProjectAs,
     AddAudioTrack,
+    EditMarker,
     Quit,
     LightTheme,
     DarkTheme,
@@ -25,6 +29,32 @@ pub fn menu_bar(ui: &mut Ui, state: &AppState) -> MenuAction {
                 action = MenuAction::OpenFile;
                 ui.close_menu();
             }
+            if ui.button("打开工程... (Ctrl+Shift+O)").clicked() {
+                action = MenuAction::OpenProject;
+                ui.close_menu();
+            }
+            ui.separator();
+            if ui
+                .add_enabled(
+                    state.song.is_some(),
+                    egui::Button::new("保存工程 (Ctrl+S)"),
+                )
+                .clicked()
+            {
+                action = MenuAction::SaveProject;
+                ui.close_menu();
+            }
+            if ui
+                .add_enabled(
+                    state.song.is_some(),
+                    egui::Button::new("工程另存为... (Ctrl+Shift+S)"),
+                )
+                .clicked()
+            {
+                action = MenuAction::SaveProjectAs;
+                ui.close_menu();
+            }
+            ui.separator();
             if ui.button("添加音频轨...").clicked() {
                 action = MenuAction::AddAudioTrack;
                 ui.close_menu();
@@ -32,6 +62,19 @@ pub fn menu_bar(ui: &mut Ui, state: &AppState) -> MenuAction {
             ui.separator();
             if ui.button("退出").clicked() {
                 action = MenuAction::Quit;
+                ui.close_menu();
+            }
+        });
+
+        ui.menu_button("编辑", |ui| {
+            if ui
+                .add_enabled(
+                    state.song.is_some(),
+                    egui::Button::new("小节标记..."),
+                )
+                .clicked()
+            {
+                action = MenuAction::EditMarker;
                 ui.close_menu();
             }
         });

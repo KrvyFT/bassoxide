@@ -1,5 +1,7 @@
 //! 页面布局与纸张规格。
 
+use serde::{Deserialize, Serialize};
+
 /// 单个页面在画布上的矩形区域（绝对坐标）。
 #[derive(Debug, Clone)]
 pub struct PageLayout {
@@ -16,7 +18,8 @@ pub struct PageLayout {
 }
 
 /// 常用纸张规格（纵向，约 96dpi 像素）
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub enum PaperSize {
     /// 148×210 mm
     A5,
