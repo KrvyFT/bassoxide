@@ -37,8 +37,11 @@ struct Gp7Beat {
 
 #[derive(Debug, Default)]
 struct Gp7Note {
+    /// GPIF 0-based 弦索引（0 = 最低音弦）
     string: usize,
     fret: usize,
+    /// GPIF `<Midi>` 音高（若有则优先使用）
+    midi: Option<u8>,
     is_tie: bool,
     pub is_dead: bool,
     pub has_vibrato: bool,
@@ -226,6 +229,15 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                                             note.fret = inner.text().unwrap_or("0").parse().unwrap_or(0);
                                         }
                                     }
+                                    "Midi" => {
+                                        if let Some(inner) =
+                                            p.descendants().find(|n| n.has_tag_name("Number"))
+                                        {
+                                            note.midi = inner.text().and_then(|t| t.trim().parse().ok());
+                                        } else if let Some(t) = p.text() {
+                                            note.midi = t.trim().parse().ok();
+                                        }
+                                    }
                                     "Tie" => note.is_tie = true,
                                     "Muted" => note.is_dead = true,
                                     "Vibrato" => note.has_vibrato = true,
@@ -334,9 +346,11 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                     }
                 }
                 if !pitches.is_empty() {
+                    // GPIF <Pitches> 为低音弦→高音弦；应用内约定弦 1 = 最高音弦（谱面最上方）
+                    let high_to_low: Vec<u8> = pitches.into_iter().rev().collect();
                     track.tuning = Tuning {
                         name: "Custom".to_string(),
-                        strings: pitches
+                        strings: high_to_low
                             .into_iter()
                             .enumerate()
                             .map(|(i, tuning)| bassoxide_core::track::GuitarString {
@@ -417,9 +431,19 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                                                 bassoxide_core::note::NoteType::Normal
                                             };
 
+                                            // GPIF String：0 = 最低音弦；应用弦号：1 = 最高音弦
+                                            let n_str = track_objects[track_idx]
+                                                .tuning
+                                                .string_count()
+                                                .max(1);
+                                            let our_string = (n_str as u8)
+                                                .saturating_sub(gp7_note.string as u8)
+                                                .clamp(1, n_str as u8);
+                                            let fret = gp7_note.fret as i8;
+
                                             let mut note = Note {
-                                                string: gp7_note.string.max(1) as u8,
-                                                fret: gp7_note.fret as i8,
+                                                string: our_string,
+                                                fret,
                                                 velocity: 95,
                                                 note_type,
                                                 effects: Vec::new(),
@@ -461,10 +485,12 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                                                 note.effects.push(NoteEffect::HammerOnPullOff(HammerOnPullOff::HammerOn)); // 统配为 HammerOn
                                             }
 
-                                            note.midi_note = track_objects[track_idx]
-                                                .tuning
-                                                .midi_note(note.string, note.fret)
-                                                .unwrap_or(0);
+                                            note.midi_note = gp7_note.midi.unwrap_or_else(|| {
+                                                track_objects[track_idx]
+                                                    .tuning
+                                                    .midi_note(note.string, note.fret)
+                                                    .unwrap_or(0)
+                                            });
                                             beat.notes.push(note);
                                         }
                                     }
@@ -637,6 +663,55 @@ mod tests {
             assert_eq!(drums.midi_program, 0);
             assert_eq!(drums.midi_channel, 9);
         }
+    }
+
+    #[test]
+    fn test_gpif_string_order_and_midi_pitch() {
+        let xml_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../scratch/score.gpif");
+        let Ok(xml) = std::fs::read_to_string(xml_path) else {
+            return;
+        };
+        let song = parse_score_gpif(&xml).expect("Failed to parse GPIF");
+        let lead = &song.tracks[0];
+        // 弦 1 = 最高音 E4(64)，弦 6 = 最低音 E2(40)
+        assert_eq!(lead.tuning.strings[0].number, 1);
+        assert_eq!(lead.tuning.strings[0].tuning, 64);
+        assert_eq!(lead.tuning.strings.last().unwrap().tuning, 40);
+
+        // 找到 Fret=6 且 Midi=70 的音符（GPIF Note0: String5→弦1）
+        let mut found = None;
+        for m in &lead.measures {
+            for v in &m.voices {
+                for b in &v.beats {
+                    for n in &b.notes {
+                        if n.fret == 6 && n.midi_note == 70 {
+                            found = Some(n.clone());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        let n0 = found.expect("应找到 Midi=70 Fret=6 的音符");
+        assert_eq!(n0.string, 1, "高音弦应映射到弦 1（谱面最上）");
+        assert_eq!(lead.tuning.midi_note(n0.string, n0.fret), Some(70));
+
+        // 低音弦空弦：GPIF String=0 Fret=0 Midi=40 → 弦 6
+        let mut low = None;
+        for m in &lead.measures {
+            for v in &m.voices {
+                for b in &v.beats {
+                    for n in &b.notes {
+                        if n.fret == 0 && n.midi_note == 40 {
+                            low = Some(n.clone());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        let low = low.expect("应找到低音 E2 空弦");
+        assert_eq!(low.string, 6);
     }
 
     #[test]

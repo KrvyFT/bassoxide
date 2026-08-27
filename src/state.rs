@@ -145,13 +145,14 @@ impl AppState {
         self.layout_settings.staff_line_spacing = (p.line_spacing * s).max(5.0);
         self.layout_settings.system_gap = (p.row_spacing * s).max(0.0);
         self.layout_settings.measures_per_line = p.measures_per_line;
-        let pack = if p.measures_per_line > 0 {
-            (2.6 / f32::from(p.measures_per_line)).clamp(0.45, 1.0)
+        // 符杆区：与每行小节数弱相关，避免挤窄时缩成短 stubs
+        let rhythm_pack = if p.measures_per_line > 0 {
+            (3.2 / f32::from(p.measures_per_line)).clamp(0.7, 1.0)
         } else {
             1.0
         };
         self.layout_settings.rhythm_height =
-            (p.font_size * 1.85 * s * pack).clamp(10.0 * paper_s, 52.0 * paper_s.max(1.0));
+            (p.font_size * 3.2 * s * rhythm_pack).clamp(24.0 * paper_s, 80.0 * paper_s.max(1.0));
 
         self.layout_settings.margin_top = base.margin_top * s;
         self.layout_settings.margin_left = base.margin_left * s;

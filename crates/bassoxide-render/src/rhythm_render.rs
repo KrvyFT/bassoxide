@@ -32,20 +32,19 @@ fn beam_level(value: NoteValue) -> u8 {
 /// 根据小节宽度与节拍间距，得到符杆缩放（小节变窄时符杆变短）
 fn stem_fit_scale(beats: &[RhythmBeat], measure_width: f32, settings: &LayoutSettings) -> f32 {
     let ref_measure = (settings.min_measure_width * 2.2).max(120.0);
-    let measure_s = (measure_width / ref_measure).clamp(0.38, 1.05);
+    let measure_s = (measure_width / ref_measure).clamp(0.55, 1.05);
 
     let ref_gap = settings.reference_beat_gap();
     let avg_gap = if beats.len() >= 2 {
         let span = (beats.last().unwrap().x - beats.first().unwrap().x).abs();
         span / (beats.len() - 1) as f32
     } else {
-        // 单音时按小节内可用宽度估计
         (measure_width * 0.35).max(ref_gap * 0.5)
     };
-    let dens_s = (avg_gap / ref_gap).clamp(0.4, 1.05);
+    let dens_s = (avg_gap / ref_gap).clamp(0.55, 1.05);
 
-    // 取更紧的一侧，保证挤窄小节时符杆明显缩短
-    (measure_s * dens_s).sqrt().clamp(0.4, 1.05)
+    // 取更紧的一侧，但保留更高下限，避免符杆缩成短 stubs
+    (measure_s * dens_s).sqrt().clamp(0.55, 1.05)
 }
 
 /// 绘制一小节的节奏符杆。
@@ -66,9 +65,9 @@ pub fn draw_measure_rhythm(
 
     let dens = stem_fit_scale(beats, measure_width, settings);
     // 符杆不得超过预留 rhythm_height（谱表∈纸张已计入该高度）
-    let max_stem = (settings.rhythm_height - 2.0).max(5.0);
-    let stem_len = ((settings.rhythm_height * 0.48).max(settings.tab_font_size * 0.65) * dens)
-        .clamp(5.0, max_stem);
+    let max_stem = (settings.rhythm_height - 1.0).max(8.0);
+    let stem_len = ((settings.rhythm_height * 0.82).max(settings.tab_font_size * 1.15) * dens)
+        .clamp(10.0, max_stem);
     let stem_top = baseline_y;
     let stem_bottom = baseline_y + stem_len;
     let stem_stroke = Stroke::new(

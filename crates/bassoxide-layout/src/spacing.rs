@@ -65,7 +65,7 @@ impl Default for LayoutSettings {
             page_width,
             page_height,
             page_margin: 48.0,
-            rhythm_height: 26.0,
+            rhythm_height: 40.0,
             measures_per_line: 4,
             paper_size: paper,
             content_scale: 1.0,
@@ -81,7 +81,7 @@ impl LayoutSettings {
 
     /// 音符在谱表上下各侧预留（保证字号不画出谱表带）
     pub fn note_pad(&self) -> f32 {
-        (self.tab_font_size * 0.55).clamp(4.0, 18.0)
+        (self.tab_font_size * 0.62).clamp(5.0, 20.0)
     }
 
     /// 五线谱加线预留

@@ -100,8 +100,8 @@ pub fn resolve_fit(settings: &mut LayoutSettings, ctx: StaffFitContext) -> FitRe
         result.messages.push("五线距已提高以容纳符头".into());
     }
 
-    // 符杆区至少能画最短符干
-    let min_rhythm = (settings.tab_font_size * 0.9).max(8.0);
+    // 符杆区下限抬高，避免自适应把它压成短 stubs
+    let min_rhythm = (settings.tab_font_size * 2.2).max(22.0);
     if settings.rhythm_height < min_rhythm {
         settings.rhythm_height = min_rhythm;
         result.adjusted = true;
@@ -118,17 +118,9 @@ pub fn resolve_fit(settings: &mut LayoutSettings, ctx: StaffFitContext) -> FitRe
         result.adjusted = true;
 
         if settings.system_gap > 0.0 {
-            let cut = (overflow * 0.55).min(settings.system_gap).max(1.0);
+            let cut = (overflow * 0.7).min(settings.system_gap).max(1.0);
             settings.system_gap = (settings.system_gap - cut).max(0.0);
             result.messages.push(format!("行间距降至 {:.0} 以适应纸张", settings.system_gap));
-            continue;
-        }
-        if settings.rhythm_height > min_rhythm + 1.0 {
-            let cut = (overflow * 0.4)
-                .min(settings.rhythm_height - min_rhythm)
-                .max(1.0);
-            settings.rhythm_height = (settings.rhythm_height - cut).max(min_rhythm);
-            result.messages.push(format!("符杆区降至 {:.0} 以适应纸张", settings.rhythm_height));
             continue;
         }
         if settings.track_gap > 12.0 {
@@ -145,10 +137,8 @@ pub fn resolve_fit(settings: &mut LayoutSettings, ctx: StaffFitContext) -> FitRe
                 settings.tab_string_spacing = ms;
                 settings.staff_line_spacing = settings.staff_line_spacing.min(ms).max(ms * 0.85);
             }
-            settings.rhythm_height = settings
-                .rhythm_height
-                .min((next * 1.85).max(min_rhythm))
-                .max((next * 0.9).max(8.0));
+            let floor = (next * 2.2).max(22.0);
+            settings.rhythm_height = settings.rhythm_height.max(floor).min((next * 3.2).max(floor));
             result.messages.push(format!("字体降至 {:.0} 以适应纸张", next));
             continue;
         }
@@ -158,6 +148,15 @@ pub fn resolve_fit(settings: &mut LayoutSettings, ctx: StaffFitContext) -> FitRe
             settings.tab_string_spacing = next;
             settings.staff_line_spacing = settings.staff_line_spacing.min(next).max(floor * 0.85);
             result.messages.push(format!("线间距降至 {:.0} 以适应纸张", next));
+            continue;
+        }
+        // 符杆区最后才压缩，且不低于下限
+        if settings.rhythm_height > min_rhythm + 1.0 {
+            let cut = (overflow * 0.25)
+                .min(settings.rhythm_height - min_rhythm)
+                .max(1.0);
+            settings.rhythm_height = (settings.rhythm_height - cut).max(min_rhythm);
+            result.messages.push(format!("符杆区降至 {:.0} 以适应纸张", settings.rhythm_height));
             continue;
         }
         // 仍放不下：减小页边距（最后手段）
