@@ -43,11 +43,18 @@ pub fn draw_measure_rhythm(
         return;
     }
 
-    let stem_len = (settings.rhythm_height * 0.62).max(10.0);
+    let stem_len = (settings.rhythm_height * 0.62)
+        .max(settings.tab_font_size * 0.85)
+        .max(10.0);
     let stem_top = baseline_y;
     let stem_bottom = baseline_y + stem_len;
-    let stem_stroke = Stroke::new(1.3_f32, theme.note_text);
-    let beam_thickness = (settings.rhythm_height * 0.09).clamp(1.6, 2.6);
+    let stem_stroke = Stroke::new(
+        (settings.tab_font_size * 0.1).clamp(1.0, 2.4),
+        theme.note_text,
+    );
+    let beam_thickness = (settings.tab_font_size * 0.14)
+        .max(settings.rhythm_height * 0.09)
+        .clamp(1.4, 3.2);
     let beam_gap = beam_thickness + 1.6;
 
     // 计算每个 beat 的节奏属性

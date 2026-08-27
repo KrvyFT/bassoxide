@@ -121,7 +121,7 @@ fn score_settings_form(
         *changed = true;
     }
     ui.label(
-        egui::RichText::new("0 = 按页面宽度自动换行")
+        egui::RichText::new("0 = 按页面宽度自动换行；>0 时每行固定小节并自动铺满页宽")
             .size(11.0)
             .color(palette.on_surface_variant),
     );

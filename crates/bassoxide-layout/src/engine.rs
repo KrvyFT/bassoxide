@@ -83,7 +83,8 @@ impl LayoutEngine {
         // 4. 分页 + 逐行详细布局
         let page_gap = 30.0;
         let page_left = 24.0;
-        let line_gap = (self.settings.system_gap * 0.4).max(16.0);
+        // 行间距直接使用 system_gap（默认 80）
+        let line_gap = self.settings.system_gap.max(8.0);
         let content_top_pad = self.settings.margin_top.min(self.settings.page_margin);
 
         let mut pages: Vec<PageLayout> = Vec::new();
@@ -303,11 +304,21 @@ impl LayoutEngine {
     ) -> SystemLayout {
         let s = &self.settings;
         let preamble_width = s.clef_width + s.time_sig_width;
+        let count = end.saturating_sub(start).max(1);
+        // 自动缩放：本行所有小节总宽铺满页面内容区
+        let available = (s.page_content_width() - preamble_width).max(s.min_measure_width);
+        let natural_sum: f32 = (start..end).map(|m| measure_widths[m]).sum::<f32>().max(1.0);
 
         let mut measure_positions = Vec::new();
         let mut x = content_left + preamble_width;
         for m in start..end {
-            let width = measure_widths[m];
+            let width = if s.measures_per_line > 0 {
+                // 固定每行 N 小节：等分页宽，观感整齐
+                available / count as f32
+            } else {
+                // 自动换行：按内容比例拉伸铺满
+                measure_widths[m] / natural_sum * available
+            };
             measure_positions.push(MeasurePosition {
                 measure_index: m,
                 x,
@@ -316,7 +327,7 @@ impl LayoutEngine {
             x += width;
         }
 
-        let content_width = (x - content_left).max(preamble_width);
+        let content_width = s.page_content_width().max(preamble_width);
 
         SystemLayout {
             start_measure: start,
@@ -362,5 +373,103 @@ impl LayoutEngine {
         }
 
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bassoxide_core::beat::{Beat, Voice};
+    use bassoxide_core::measure::{MasterBar, Measure};
+    use bassoxide_core::note::Note;
+    use bassoxide_core::song::{Song, SongInfo};
+    use bassoxide_core::track::{StaffDisplay, Track, Tuning};
+    use bassoxide_core::types::Duration;
+
+    fn sample_song(measures: usize) -> Song {
+        let mut song = Song {
+            info: SongInfo {
+                title: "layout-test".into(),
+                ..Default::default()
+            },
+            tempo: 120,
+            ..Default::default()
+        };
+        for _ in 0..measures {
+            song.master_bars.push(MasterBar::default());
+        }
+        let mut track = Track {
+            name: "Gtr".into(),
+            tuning: Tuning::standard_guitar(),
+            staff_display: StaffDisplay {
+                show_standard: false,
+                show_tab: true,
+                tab_strings: 6,
+            },
+            ..Default::default()
+        };
+        for _ in 0..measures {
+            let mut voices = [
+                Voice::default(),
+                Voice::default(),
+                Voice::default(),
+                Voice::default(),
+            ];
+            voices[0].beats = vec![
+                Beat {
+                    duration: Duration::default(),
+                    notes: vec![Note {
+                        string: 1,
+                        fret: 0,
+                        midi_note: 40,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                Beat {
+                    duration: Duration::default(),
+                    notes: vec![Note {
+                        string: 1,
+                        fret: 2,
+                        midi_note: 42,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ];
+            track.measures.push(Measure {
+                voices,
+                ..Default::default()
+            });
+        }
+        song.tracks.push(track);
+        song
+    }
+
+    #[test]
+    fn four_measures_fill_page_width() {
+        let settings = LayoutSettings::default();
+        assert_eq!(settings.measures_per_line, 4);
+        assert!((settings.tab_font_size - 13.0).abs() < f32::EPSILON);
+        assert!((settings.tab_string_spacing - 10.0).abs() < f32::EPSILON);
+        assert!((settings.system_gap - 80.0).abs() < f32::EPSILON);
+
+        let song = sample_song(8);
+        let engine = LayoutEngine::new(settings.clone()).with_selected_track(0);
+        let layout = engine.layout(&song);
+        assert!(!layout.systems.is_empty());
+
+        let preamble = settings.clef_width + settings.time_sig_width;
+        let available = settings.page_content_width() - preamble;
+        for system in &layout.systems {
+            let sum: f32 = system.measure_positions.iter().map(|m| m.width).sum();
+            assert!(
+                (sum - available).abs() < 1.0,
+                "sum={sum} available={available}"
+            );
+            assert!(system.measure_positions.len() <= 4);
+        }
+        // 行间距使用完整 system_gap，同页多行时应能自动分页
+        assert!(layout.pages.len() >= 1);
     }
 }

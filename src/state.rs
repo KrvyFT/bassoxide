@@ -32,10 +32,10 @@ pub struct ScorePrefs {
 impl Default for ScorePrefs {
     fn default() -> Self {
         Self {
-            font_size: 12.0,
-            line_spacing: 14.0,
+            font_size: 13.0,
+            line_spacing: 10.0,
             row_spacing: 80.0,
-            measures_per_line: 0,
+            measures_per_line: 4,
         }
     }
 }
@@ -126,10 +126,13 @@ impl AppState {
         let base = LayoutSettings::default();
 
         self.layout_settings.tab_font_size = p.font_size * z;
+        // 线间距同时作用于弦距与五线距
         self.layout_settings.tab_string_spacing = p.line_spacing * z;
-        self.layout_settings.staff_line_spacing = (p.line_spacing * 0.75).max(6.0) * z;
+        self.layout_settings.staff_line_spacing = p.line_spacing * z;
         self.layout_settings.system_gap = p.row_spacing * z;
         self.layout_settings.measures_per_line = p.measures_per_line;
+        // 符杆区域随字体大小变化
+        self.layout_settings.rhythm_height = (p.font_size * 2.0).clamp(18.0, 52.0) * z;
 
         self.layout_settings.margin_top = base.margin_top * z;
         self.layout_settings.margin_left = base.margin_left * z;
@@ -141,7 +144,6 @@ impl AppState {
         self.layout_settings.page_width = base.page_width * z;
         self.layout_settings.page_height = base.page_height * z;
         self.layout_settings.page_margin = base.page_margin * z;
-        self.layout_settings.rhythm_height = base.rhythm_height * z;
 
         self.needs_relayout = true;
     }

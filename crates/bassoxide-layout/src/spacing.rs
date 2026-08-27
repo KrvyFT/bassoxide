@@ -42,16 +42,16 @@ pub struct LayoutSettings {
 impl Default for LayoutSettings {
     fn default() -> Self {
         Self {
-            tab_string_spacing: 14.0,
+            tab_string_spacing: 10.0,
             staff_line_spacing: 10.0,
-            min_measure_width: 120.0,
-            min_beat_spacing: 25.0,
+            min_measure_width: 80.0,
+            min_beat_spacing: 22.0,
             track_gap: 50.0,
             system_gap: 80.0,
             margin_left: 40.0,
             margin_top: 60.0,
             available_width: 1200.0,
-            tab_font_size: 12.0,
+            tab_font_size: 13.0,
             clef_width: 30.0,
             time_sig_width: 28.0,
             // A4 纵向 210×297mm，约 96dpi 下 794×1123 px
@@ -59,7 +59,7 @@ impl Default for LayoutSettings {
             page_height: 1123.0,
             page_margin: 48.0,
             rhythm_height: 26.0,
-            measures_per_line: 0,
+            measures_per_line: 4,
         }
     }
 }
