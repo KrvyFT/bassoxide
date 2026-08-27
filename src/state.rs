@@ -97,6 +97,10 @@ impl AppState {
             measure_count,
             song.tempo,
         );
+        if let Some(audio) = &self.audio_engine {
+            audio.stop();
+            audio.reload_song(&song);
+        }
         self.song = Some(song);
         self.needs_relayout = true;
         self.cursor = CursorPosition::default();
