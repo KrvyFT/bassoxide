@@ -5,6 +5,8 @@ use bassoxide_layout::engine::{LayoutEngine, LayoutResult};
 use bassoxide_layout::spacing::LayoutSettings;
 use bassoxide_render::Theme;
 
+use crate::ui::material::MaterialPalette;
+
 /// 编辑器光标位置
 #[derive(Debug, Clone, Default)]
 pub struct CursorPosition {
@@ -38,10 +40,14 @@ pub struct AppState {
     pub audio_engine: Option<bassoxide_audio::AudioEngine>,
     /// 视图缩放系数
     pub zoom_factor: f32,
-    /// 当前 SoundFont
-    pub current_sf2: String,
     /// 当前显示的轨道索引（单轨道显示）
     pub selected_track: usize,
+    /// 是否浅色主题（Material You 默认浅色）
+    pub is_light_theme: bool,
+    /// 打开的轨道配置弹窗（轨道索引）
+    pub track_config_popup: Option<usize>,
+    /// 主题是否已应用到 egui
+    pub theme_dirty: bool,
 }
 
 impl Default for AppState {
@@ -54,12 +60,14 @@ impl Default for AppState {
             }
         };
 
+        let is_light_theme = true;
+        let palette = MaterialPalette::for_mode(is_light_theme);
+
         Self {
             song: None,
             layout: None,
             layout_settings: LayoutSettings::default(),
-            // A4 白纸显示：使用浅色（纸张）主题，深色墨迹
-            theme: Theme::light(),
+            theme: palette.to_score_theme(),
             cursor: CursorPosition::default(),
             scroll_y: 0.0,
             needs_relayout: false,
@@ -67,8 +75,10 @@ impl Default for AppState {
             status_message: "就绪".to_string(),
             audio_engine,
             zoom_factor: 1.0,
-            current_sf2: "Orchestra_HQ.sf2".to_string(),
             selected_track: 0,
+            is_light_theme,
+            track_config_popup: None,
+            theme_dirty: true,
         }
     }
 }
@@ -94,6 +104,16 @@ impl AppState {
         self.layout_settings.rhythm_height = base.rhythm_height * z;
     }
 
+    /// 切换浅色/深色主题
+    pub fn set_light_theme(&mut self, light: bool) {
+        if self.is_light_theme != light {
+            self.is_light_theme = light;
+            let palette = MaterialPalette::for_mode(light);
+            self.theme = palette.to_score_theme();
+            self.theme_dirty = true;
+        }
+    }
+
     /// 切换显示的轨道
     pub fn select_track(&mut self, index: usize) {
         if index != self.selected_track {
@@ -108,6 +128,7 @@ impl AppState {
         let measure_count = song.measure_count();
         self.file_path = path;
         self.selected_track = 0;
+        self.track_config_popup = None;
         self.status_message = format!(
             "已加载: {} | {} 轨道, {} 小节, {} BPM",
             song.info.title.as_str(),

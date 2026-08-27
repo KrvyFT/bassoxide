@@ -129,6 +129,7 @@ impl Song {
                 }
             }
             track.sync_instrument_type();
+            track.ensure_staff_display();
         }
     }
 }

@@ -19,7 +19,7 @@ pub mod types;
 
 // 重新导出常用类型
 pub use song::Song;
-pub use track::Track;
+pub use track::{StaffDisplay, Track};
 pub use measure::{MasterBar, Measure};
 pub use beat::{Beat, Voice};
 pub use note::Note;

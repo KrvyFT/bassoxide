@@ -368,6 +368,16 @@ fn read_tracks(r: &mut GpReader, count: usize) -> Result<Vec<Track>> {
 
         let midi_channel = midi_channel_index.saturating_sub(1);
 
+        let tuning = Tuning {
+            name: String::new(),
+            strings,
+        };
+        let midi_program = 25u8;
+        let staff_display = bassoxide_core::track::StaffDisplay::default_for(
+            midi_program,
+            tuning.string_count(),
+            is_percussion,
+        );
         tracks.push(Track {
             number: (i + 1) as u8,
             name,
@@ -376,13 +386,10 @@ fn read_tracks(r: &mut GpReader, count: usize) -> Result<Vec<Track>> {
             } else {
                 InstrumentType::ElectricGuitar
             },
-            tuning: Tuning {
-                name: String::new(),
-                strings,
-            },
+            tuning,
             midi_channel,
             midi_port,
-            midi_program: 25,
+            midi_program,
             midi_bank: 0,
             capo,
             fret_count,
@@ -393,6 +400,7 @@ fn read_tracks(r: &mut GpReader, count: usize) -> Result<Vec<Track>> {
             is_muted: false,
             is_solo: false,
             is_percussion,
+            staff_display,
             measures: Vec::new(),
         });
     }

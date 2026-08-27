@@ -8,3 +8,4 @@ pub mod synth;
 
 pub use playback::{AudioEngine, PlaybackStatus};
 pub use error::{AudioError, Result};
+pub use synth::DEFAULT_SOUNDFONT;

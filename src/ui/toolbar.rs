@@ -3,11 +3,14 @@
 use egui::Ui;
 
 use crate::state::AppState;
+use crate::ui::material::MaterialPalette;
 
 /// 绘制工具栏
 pub fn toolbar(ui: &mut Ui, state: &mut AppState) {
+    let palette = MaterialPalette::for_mode(state.is_light_theme);
+
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.spacing_mut().item_spacing.x = 6.0;
 
         // 歌曲信息
         let (title, artist, tempo) = match &state.song {
@@ -19,16 +22,24 @@ pub fn toolbar(ui: &mut Ui, state: &mut AppState) {
             None => return,
         };
 
-        ui.label(egui::RichText::new(title).strong().size(14.0));
+        ui.label(
+            egui::RichText::new(title)
+                .strong()
+                .size(14.0)
+                .color(palette.on_surface),
+        );
         if !artist.is_empty() {
             ui.label(
                 egui::RichText::new(format!("— {}", artist))
                     .size(12.0)
-                    .color(egui::Color32::from_gray(160)),
+                    .color(palette.on_surface_variant),
             );
         }
         ui.separator();
-        ui.label(format!("♩={}", tempo));
+        ui.label(
+            egui::RichText::new(format!("♩={}", tempo))
+                .color(palette.primary),
+        );
         ui.separator();
 
         // 单轨道显示：轨道切换
@@ -42,15 +53,29 @@ pub fn toolbar(ui: &mut Ui, state: &mut AppState) {
                 .map(|t| t.name.clone())
                 .unwrap_or_default();
 
-            ui.label("显示轨道:");
-            if ui.button("◀").on_hover_text("上一轨道").clicked() && selected > 0 {
+            ui.label(
+                egui::RichText::new("显示轨道:")
+                    .color(palette.on_surface_variant),
+            );
+            if ui
+                .add(egui::Button::new("◀").fill(palette.secondary_container))
+                .on_hover_text("上一轨道")
+                .clicked()
+                && selected > 0
+            {
                 state.select_track(selected - 1);
             }
             ui.label(
                 egui::RichText::new(format!("{}/{} {}", selected + 1, track_count, track_name))
-                    .size(12.0),
+                    .size(12.0)
+                    .color(palette.on_surface),
             );
-            if ui.button("▶").on_hover_text("下一轨道").clicked() && selected + 1 < track_count {
+            if ui
+                .add(egui::Button::new("▶").fill(palette.secondary_container))
+                .on_hover_text("下一轨道")
+                .clicked()
+                && selected + 1 < track_count
+            {
                 state.select_track(selected + 1);
             }
         }

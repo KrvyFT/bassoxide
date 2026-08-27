@@ -227,11 +227,10 @@ impl LayoutEngine {
             None => return (staves, 0.0),
         };
 
-        let string_count = track.string_count();
-        let is_guitar_bass =
-            track.midi_program >= 24 && track.midi_program <= 39 && string_count > 0;
+        let display = &track.staff_display;
+        let mut any = false;
 
-        if !is_guitar_bass {
+        if display.show_standard {
             let standard_height = 24.0;
             staves.push(StaffLayout {
                 staff_type: StaffType::Standard,
@@ -241,8 +240,11 @@ impl LayoutEngine {
                 height: standard_height,
             });
             staff_y += standard_height + s.track_gap;
-        } else {
-            // 六线谱
+            any = true;
+        }
+
+        if display.show_tab {
+            let string_count = display.tab_strings.max(1) as usize;
             let tab_height = s.tab_staff_height(string_count);
             staves.push(StaffLayout {
                 staff_type: StaffType::Tablature,
@@ -251,10 +253,12 @@ impl LayoutEngine {
                 y: staff_y,
                 height: tab_height,
             });
-            // 六线谱下方预留符杆(节奏)区域
+            // Tab 下方预留符杆(节奏)区域
             staff_y += tab_height + s.rhythm_height + 8.0;
+            any = true;
+        }
 
-            // 简谱
+        if display.show_numbered {
             let numbered_height = 20.0;
             staves.push(StaffLayout {
                 staff_type: StaffType::Numbered,
@@ -264,6 +268,20 @@ impl LayoutEngine {
                 height: numbered_height,
             });
             staff_y += numbered_height + s.track_gap;
+            any = true;
+        }
+
+        // 兜底：至少显示五线谱，避免空白
+        if !any {
+            let standard_height = 24.0;
+            staves.push(StaffLayout {
+                staff_type: StaffType::Standard,
+                track_index: selected,
+                string_count: 5,
+                y: staff_y,
+                height: standard_height,
+            });
+            staff_y += standard_height + s.track_gap;
         }
 
         let total_height = (staff_y - s.track_gap + 10.0).max(0.0);
