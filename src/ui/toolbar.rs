@@ -102,60 +102,95 @@ pub fn toolbar(ui: &mut Ui, state: &mut AppState) {
             ui.label(egui::RichText::new("乐谱种类:").color(palette.on_surface_variant));
 
             let track_idx = state.selected_track.min(track_count - 1);
+            let mut open_tuning = false;
+            let mut set_standard: Option<bool> = None;
+            let mut set_tab: Option<bool> = None;
+            let mut set_string_count: Option<u8> = None;
+
+            // 先读显示状态（不可变），再画控件，避免与 song 可变借用纠缠
+            let (show_standard, show_tab, string_count) = state
+                .song
+                .as_ref()
+                .and_then(|s| s.tracks.get(track_idx))
+                .map(|t| {
+                    (
+                        t.staff_display.show_standard,
+                        t.staff_display.show_tab,
+                        t.string_count().clamp(1, 8) as u8,
+                    )
+                })
+                .unwrap_or((true, false, 6));
+
+            let mut standard = show_standard;
+            if ui
+                .checkbox(&mut standard, "五线谱")
+                .on_hover_text("标准五线记谱")
+                .changed()
+            {
+                set_standard = Some(standard);
+            }
+
+            let mut tab_on = show_tab;
+            if ui
+                .checkbox(&mut tab_on, "六线谱")
+                .on_hover_text("Tab：可配置弦数与每弦音高")
+                .changed()
+            {
+                set_tab = Some(tab_on);
+            }
+
+            if show_tab || set_tab == Some(true) {
+                let mut n = string_count;
+                ui.label(
+                    egui::RichText::new("弦数")
+                        .size(11.0)
+                        .color(palette.on_surface_variant),
+                );
+                if ui
+                    .add(egui::DragValue::new(&mut n).range(1..=8).speed(0.2))
+                    .on_hover_text("六线谱线条数量（1–8）")
+                    .changed()
+                {
+                    set_string_count = Some(n);
+                }
+
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new("调弦…").color(palette.on_primary),
+                        )
+                        .fill(palette.primary)
+                        .corner_radius(egui::CornerRadius::ZERO),
+                    )
+                    .on_hover_text("配置每条线的空弦音高")
+                    .clicked()
+                {
+                    open_tuning = true;
+                }
+            }
+
             if let Some(song) = state.song.as_mut() {
                 if let Some(track) = song.tracks.get_mut(track_idx) {
-                    let mut standard = track.staff_display.show_standard;
-                    if ui
-                        .checkbox(&mut standard, "五线谱")
-                        .on_hover_text("标准五线记谱")
-                        .changed()
-                    {
-                        track.staff_display.show_standard = standard;
+                    if let Some(v) = set_standard {
+                        track.staff_display.show_standard = v;
                         needs_relayout = true;
                     }
-
-                    let mut tab_on = track.staff_display.show_tab;
-                    if ui
-                        .checkbox(&mut tab_on, "六线谱")
-                        .on_hover_text("Tab：可配置弦数与每弦音高")
-                        .changed()
-                    {
-                        if tab_on {
+                    if let Some(v) = set_tab {
+                        if v {
                             track.enable_tab();
                         } else {
                             track.staff_display.disable_tab();
                         }
                         needs_relayout = true;
                     }
-
-                    if track.staff_display.show_tab {
-                        let mut n = track.string_count().clamp(1, 8) as u8;
-                        ui.label(
-                            egui::RichText::new("弦数")
-                                .size(11.0)
-                                .color(palette.on_surface_variant),
-                        );
-                        if ui
-                            .add(egui::DragValue::new(&mut n).range(1..=8).speed(0.2))
-                            .on_hover_text("六线谱线条数量（1–8）")
-                            .changed()
-                        {
-                            track.set_string_count(n as usize);
-                            needs_relayout = true;
-                        }
-
-                        if ui
-                            .add(
-                                egui::Button::new("调弦…")
-                                    .corner_radius(egui::CornerRadius::ZERO),
-                            )
-                            .on_hover_text("配置每条线的空弦音高")
-                            .clicked()
-                        {
-                            state.tuning_editor_open = true;
-                        }
+                    if let Some(n) = set_string_count {
+                        track.set_string_count(n as usize);
+                        needs_relayout = true;
                     }
                 }
+            }
+            if open_tuning {
+                state.tuning_editor_open = true;
             }
         }
     });
