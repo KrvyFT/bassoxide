@@ -46,15 +46,19 @@ pub fn parse_midi(data: &[u8]) -> Result<Song> {
         if smf_track.is_empty() { continue; }
 
         let mut current_tick = 0u32;
-        // BTreeMap 保持时间顺序: tick -> Vec<(midi_note, velocity, duration_ticks)>
         let mut active_notes: BTreeMap<u32, Vec<(u8, u8, u32)>> = BTreeMap::new();
-        let mut note_ons: BTreeMap<u8, (u32, u8)> = BTreeMap::new(); // note -> (start_tick, velocity)
+        let mut note_ons: BTreeMap<u8, (u32, u8)> = BTreeMap::new();
+        let mut midi_program = 0u8;
+        let mut midi_bank = 0u8;
+        let mut midi_channel = 0u8;
 
         for event in smf_track {
             current_tick += event.delta.as_int() as u32;
 
             match event.kind {
-                TrackEventKind::Midi { channel: _, message } => match message {
+                TrackEventKind::Midi { channel, message } => {
+                    midi_channel = channel.as_int();
+                    match message {
                     midly::MidiMessage::NoteOn { key, vel } => {
                         let k = key.as_int();
                         let v = vel.as_int();
@@ -72,8 +76,17 @@ pub fn parse_midi(data: &[u8]) -> Result<Song> {
                             active_notes.entry(start).or_default().push((k, velocity, duration));
                         }
                     }
+                    midly::MidiMessage::ProgramChange { program } => {
+                        midi_program = program.as_int();
+                    }
+                    midly::MidiMessage::Controller { controller, value } => {
+                        if controller.as_int() == 0 {
+                            midi_bank = value.as_int();
+                        }
+                    }
                     _ => {}
-                },
+                    }
+                }
                 _ => {}
             }
         }
@@ -84,6 +97,13 @@ pub fn parse_midi(data: &[u8]) -> Result<Song> {
         
         let mut track = Track::default();
         track.name = format!("Track {}", track_idx + 1);
+        track.midi_program = midi_program;
+        track.midi_bank = midi_bank;
+        track.midi_channel = midi_channel;
+        if midi_channel == 9 {
+            track.is_percussion = true;
+        }
+        track.sync_instrument_type();
         
         let mut current_measure_idx = 0;
         let mut current_measure = Measure::default();
