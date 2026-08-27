@@ -1,12 +1,50 @@
 //! 底部轨道列表面板（选轨；谱面类型在顶部工具栏切换）。
 
-use eframe::egui::{self, Align, Layout, RichText, Sense};
+use eframe::egui::{self, FontId, RichText, Sense};
 
 use crate::state::AppState;
 use crate::ui::material::MaterialPalette;
 
 /// 单行轨道行高（含内边距，避免文字压分隔线）
 const ROW_HEIGHT: f32 = 36.0;
+
+/// 按可用宽度省略；有空间时尽量显示全名
+fn ellipsize(ui: &egui::Ui, text: &str, max_width: f32, font: &FontId) -> String {
+    let full_w = ui.fonts(|f| {
+        f.layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE)
+            .size()
+            .x
+    });
+    if full_w <= max_width {
+        return text.to_owned();
+    }
+    let ellipsis = "…";
+    let ellipsis_w = ui.fonts(|f| {
+        f.layout_no_wrap(ellipsis.to_owned(), font.clone(), egui::Color32::WHITE)
+            .size()
+            .x
+    });
+    let budget = (max_width - ellipsis_w).max(0.0);
+    let mut lo = 0usize;
+    let mut hi = text.chars().count();
+    while lo < hi {
+        let mid = (lo + hi + 1) / 2;
+        let prefix: String = text.chars().take(mid).collect();
+        let w = ui.fonts(|f| {
+            f.layout_no_wrap(prefix.clone(), font.clone(), egui::Color32::WHITE)
+                .size()
+                .x
+        });
+        if w <= budget {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    let mut out: String = text.chars().take(lo).collect();
+    out.push_str(ellipsis);
+    out
+}
 
 pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
     let palette = MaterialPalette::for_mode(state.is_light_theme);
@@ -60,46 +98,37 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
                                 palette.on_surface
                             };
 
-                            let row_w = ui.available_width();
+                            let row_w = ui.available_width().max(full_w);
                             let (row_rect, row_resp) = ui.allocate_exact_size(
                                 egui::vec2(row_w, ROW_HEIGHT),
                                 Sense::click(),
                             );
 
-                            // 背景
                             ui.painter().rect_filled(
                                 row_rect,
                                 egui::CornerRadius::ZERO,
                                 row_fill,
                             );
-                            // 底部分隔线（贴底，与文字留出空隙）
                             ui.painter().hline(
                                 row_rect.x_range(),
                                 row_rect.bottom() - 0.5,
                                 egui::Stroke::new(1.0_f32, palette.outline_variant),
                             );
 
-                            // 单行垂直居中：Trk N: Name，超出省略
+                            // 使用整行可用宽度；仅当文字真正超出时才省略
                             let label = format!("Trk {}: {name}", i + 1);
-                            let inner = egui::Rect::from_min_max(
-                                egui::pos2(row_rect.left() + 10.0, row_rect.top()),
-                                egui::pos2(row_rect.right() - 8.0, row_rect.bottom()),
+                            let pad_x = 10.0;
+                            let max_text_w = (row_rect.width() - pad_x * 2.0).max(24.0);
+                            let font = FontId::proportional(13.0);
+                            let drawn = ellipsize(ui, &label, max_text_w, &font);
+                            let galley = ui.fonts(|f| {
+                                f.layout_no_wrap(drawn, font, text_color)
+                            });
+                            let text_pos = egui::pos2(
+                                row_rect.left() + pad_x,
+                                row_rect.center().y - galley.size().y * 0.5,
                             );
-                            ui.allocate_new_ui(
-                                egui::UiBuilder::new()
-                                    .max_rect(inner)
-                                    .layout(Layout::left_to_right(Align::Center)),
-                                |ui| {
-                                    ui.set_min_height(ROW_HEIGHT);
-                                    ui.add(
-                                        egui::Label::new(
-                                            RichText::new(&label).size(13.0).color(text_color),
-                                        )
-                                        .truncate()
-                                        .selectable(false),
-                                    );
-                                },
-                            );
+                            ui.painter().galley(text_pos, galley, text_color);
 
                             row_resp.clone().on_hover_text(&label);
 
@@ -107,7 +136,6 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
                                 select_change = Some(i);
                             } else if row_resp.hovered() {
                                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                // 悬停描边（不改变行高）
                                 ui.painter().rect_stroke(
                                     row_rect,
                                     egui::CornerRadius::ZERO,
