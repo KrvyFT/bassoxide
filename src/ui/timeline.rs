@@ -43,6 +43,46 @@ fn preset_choices() -> &'static [(u8, u8, &'static str)] {
     ]
 }
 
+/// 轨道名列宽（窄栏 + 超出省略）
+const TRACK_NAME_WIDTH: f32 = 112.0;
+
+fn ellipsize(ui: &egui::Ui, text: &str, max_width: f32, font: &egui::FontId) -> String {
+    let full_w = ui.fonts(|f| {
+        f.layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE)
+            .size()
+            .x
+    });
+    if full_w <= max_width {
+        return text.to_owned();
+    }
+    let ellipsis = "…";
+    let ellipsis_w = ui.fonts(|f| {
+        f.layout_no_wrap(ellipsis.to_owned(), font.clone(), egui::Color32::WHITE)
+            .size()
+            .x
+    });
+    let budget = (max_width - ellipsis_w).max(0.0);
+    let mut lo = 0usize;
+    let mut hi = text.chars().count();
+    while lo < hi {
+        let mid = (lo + hi + 1) / 2;
+        let prefix: String = text.chars().take(mid).collect();
+        let w = ui.fonts(|f| {
+            f.layout_no_wrap(prefix.clone(), font.clone(), egui::Color32::WHITE)
+                .size()
+                .x
+        });
+        if w <= budget {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    let mut out: String = text.chars().take(lo).collect();
+    out.push_str(ellipsis);
+    out
+}
+
 pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
     let palette = MaterialPalette::for_mode(state.is_light_theme);
 
@@ -107,17 +147,20 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
 
                             let label = format!("Trk {}: {}", i + 1, track.name);
                             let name = gm_name(track.midi_bank, track.midi_program);
+                            let name_font = egui::FontId::proportional(13.0);
+                            let label_draw =
+                                ellipsize(ui, &label, TRACK_NAME_WIDTH - 4.0, &name_font);
 
-                            // 名称区
+                            // 名称区（窄栏，超出省略）
                             let name_rect = egui::Rect::from_min_size(
                                 row_rect.min + egui::vec2(8.0, 0.0),
-                                egui::vec2(220.0, row_h),
+                                egui::vec2(TRACK_NAME_WIDTH, row_h),
                             );
                             ui.painter().text(
                                 name_rect.left_center(),
                                 egui::Align2::LEFT_CENTER,
-                                label,
-                                egui::FontId::proportional(13.0),
+                                label_draw,
+                                name_font,
                                 if selected {
                                     palette.on_primary_container
                                 } else {
@@ -126,7 +169,7 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
                             );
 
                             // 乐器区（直角按钮）
-                            let inst_x = name_rect.right() + 8.0;
+                            let inst_x = name_rect.right() + 6.0;
                             let inst_w = (row_rect.right() - inst_x - 8.0).max(120.0);
                             let inst_rect = egui::Rect::from_min_size(
                                 egui::pos2(inst_x, row_rect.top() + 4.0),
@@ -137,19 +180,20 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
                                 egui::CornerRadius::ZERO,
                                 palette.primary_container,
                             );
+                            let inst_font = egui::FontId::proportional(12.0);
+                            let inst_draw = ellipsize(ui, name, inst_w - 12.0, &inst_font);
                             ui.painter().text(
-                                inst_rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                name,
-                                egui::FontId::proportional(12.0),
+                                inst_rect.left_center() + egui::vec2(6.0, 0.0),
+                                egui::Align2::LEFT_CENTER,
+                                inst_draw,
+                                inst_font,
                                 palette.on_primary_container,
                             );
 
-                            let name_click = row_resp
-                                .clone()
-                                .with_new_rect(name_rect)
-                                .on_hover_text("点击仅显示该轨道");
-                            // 用交互：整行点击选轨；点乐器区打开弹窗
+                            // 悬停显示完整轨道名
+                            row_resp.clone().on_hover_text(&label);
+
+                            // 整行点击选轨；点乐器区打开弹窗
                             let pointer = row_resp.interact_pointer_pos();
                             if row_resp.clicked() {
                                 if let Some(pos) = pointer {
@@ -161,8 +205,9 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
                                 } else {
                                     select_change = Some(i);
                                 }
+                            } else if row_resp.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                             }
-                            let _ = name_click;
                         }
                     } else {
                         ui.label(

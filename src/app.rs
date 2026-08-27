@@ -205,13 +205,20 @@ impl eframe::App for BassoxideApp {
             .frame(
                 egui::Frame::NONE
                     .fill(palette.surface_container)
-                    .inner_margin(egui::Margin::symmetric(10, 6))
+                    .inner_margin(egui::Margin {
+                        left: 10,
+                        right: 10,
+                        top: 14,
+                        bottom: 6,
+                    })
                     .outer_margin(egui::Margin::ZERO)
                     .corner_radius(egui::CornerRadius::ZERO)
                     .shadow(egui::epaint::Shadow::NONE)
                     .stroke(egui::Stroke::NONE),
             )
             .show(ctx, |ui| {
+                // 与谱面区留出间距，避免音频同步轨贴顶
+                ui.add_space(4.0);
                 // 上：音频同步；下：轨道列表 — 同一表面、直角分界
                 let total = ui.available_height();
                 let audio_h = (total * 0.48).clamp(120.0, 200.0);
@@ -226,14 +233,13 @@ impl eframe::App for BassoxideApp {
                 crate::ui::timeline::timeline_panel(ui, &mut self.state);
             });
 
-        // 播放中持续刷新 UI（播放头）
-        if self
-            .state
-            .audio_player
-            .as_ref()
-            .is_some_and(|p| p.status() == bassoxide_audio::PlaybackStatus::Playing)
-        {
-            ctx.request_repaint();
+        // 播放：用帧时间推进播放头（无声卡也能走表）
+        if let Some(player) = &self.state.audio_player {
+            if player.status() == bassoxide_audio::PlaybackStatus::Playing {
+                let dt = ctx.input(|i| i.stable_dt) as f64;
+                player.tick(dt);
+                ctx.request_repaint();
+            }
         }
 
         // 主内容区：Material You surface 衬底
