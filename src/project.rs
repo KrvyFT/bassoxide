@@ -473,4 +473,56 @@ mod tests {
         // 魔数仍为 FLAC
         assert_eq!(&bytes[0..4], b"fLaC");
     }
+
+    #[test]
+    fn save_bso_roundtrip_via_app_state() {
+        use crate::state::AppState;
+        use crate::ui::audio_track::AudioTrack;
+        use std::sync::Arc;
+
+        let flac = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/click_120bpm.flac");
+        if !flac.exists() {
+            eprintln!("skip: missing {}", flac.display());
+            return;
+        }
+        let raw = fs::read(&flac).unwrap();
+        let mut state = AppState::default();
+        state.load_song(tiny_song(), Some("demo.gp5".into()));
+        let track = AudioTrack {
+            path: "click_120bpm.flac".into(),
+            samples: Arc::new(vec![0.0; 100]),
+            sample_rate: 44100,
+            duration_secs: 100.0 / 44100.0,
+            peaks: vec![0.1],
+            analysis: bassoxide_audio::BeatAnalysis {
+                bpm: 120.0,
+                beat_times: vec![],
+                measure_times: vec![],
+                beats_per_bar: 4,
+            },
+            sync_offset_secs: 0.1,
+            pixels_per_second: 80.0,
+            view_start_secs: 0.0,
+            source_bytes: Some(raw.clone()),
+            source_name: Some("click_120bpm.flac".into()),
+        };
+        state.audio_track = Some(track);
+        state.playback_rate = 0.9;
+        state.metronome_enabled = true;
+
+        let dir = std::env::temp_dir().join("bassoxide_bso_test");
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("roundtrip.bso");
+        save_bso(&path, &state).expect("save");
+        let loaded = load_bso(&path).expect("load");
+        assert_eq!(loaded.song.info.title, "t");
+        assert!((loaded.meta.playback_rate - 0.9).abs() < 1e-6);
+        assert!(loaded.meta.metronome_enabled);
+        let (name, bytes) = loaded.audio_file.expect("audi");
+        assert_eq!(name, "click_120bpm.flac");
+        assert_eq!(bytes, raw);
+        assert_eq!(&bytes[0..4], b"fLaC");
+        let size = fs::metadata(&path).unwrap().len();
+        assert!(size > raw.len() as u64);
+    }
 }
