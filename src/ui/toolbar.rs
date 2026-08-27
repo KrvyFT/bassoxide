@@ -191,6 +191,7 @@ pub fn toolbar(ui: &mut Ui, state: &mut AppState) {
             }
             if open_tuning {
                 state.tuning_editor_open = true;
+                state.status_message = "打开六线谱调弦".into();
             }
         }
     });
@@ -207,14 +208,16 @@ pub fn tuning_editor_window(ctx: &egui::Context, state: &mut AppState) {
     }
     let palette = MaterialPalette::for_mode(state.is_light_theme);
     let track_idx = state.selected_track;
-    let mut open = state.tuning_editor_open;
+    let mut close = false;
     let mut changed = false;
 
     egui::Window::new("六线谱调弦")
-        .open(&mut open)
+        .id(egui::Id::new("tab_tuning_editor"))
         .collapsible(false)
         .resizable(true)
-        .default_width(320.0)
+        .default_width(360.0)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .order(egui::Order::Foreground)
         .show(ctx, |ui| {
             ui.label(
                 egui::RichText::new("修改弦数或空弦音高后，谱面音符会按原音高自动换到新弦位。")
@@ -280,9 +283,23 @@ pub fn tuning_editor_window(ctx: &egui::Context, state: &mut AppState) {
                     );
                 });
             }
+
+            ui.add_space(10.0);
+            ui.separator();
+            if ui
+                .add(
+                    egui::Button::new(egui::RichText::new("完成").color(palette.on_primary))
+                        .fill(palette.primary),
+                )
+                .clicked()
+            {
+                close = true;
+            }
         });
 
-    state.tuning_editor_open = open;
+    if close {
+        state.tuning_editor_open = false;
+    }
     if changed {
         state.needs_relayout = true;
         state.status_message = "已更新六线谱调弦并重映射音符".into();

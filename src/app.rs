@@ -208,7 +208,7 @@ impl eframe::App for BassoxideApp {
         // 底部整体：音频同步轨 + 轨道（贴边、无圆角；固定高度避免鼠标误触拉伸上移）
         egui::TopBottomPanel::bottom("bottom_dock_fixed")
             .resizable(false)
-            .exact_height(300.0)
+            .exact_height(360.0)
             .show_separator_line(true)
             .frame(
                 egui::Frame::NONE
