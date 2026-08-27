@@ -109,7 +109,6 @@ pub fn resolve_fit(settings: &mut LayoutSettings, ctx: StaffFitContext) -> FitRe
     }
 
     // —— 优先级 2：谱表 ∈ 纸张 ——
-    let max_h = max_system_height_on_page(settings);
     let mut guard = 0;
     while estimate_system_height(settings, ctx) > max_system_height_on_page(settings) && guard < 64 {
         guard += 1;
