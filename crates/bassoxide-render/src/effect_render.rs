@@ -33,10 +33,10 @@ pub fn draw_harmonic(
     );
 }
 
-/// 绘制滑音斜线
+/// 绘制滑音斜线（按方向区分 / 与 \）
 pub fn draw_slide(
     painter: &Painter,
-    _slide_type: &SlideType,
+    slide_type: &SlideType,
     x1: f32,
     y1: f32,
     x2: f32,
@@ -44,9 +44,74 @@ pub fn draw_slide(
     theme: &Theme,
 ) {
     let stroke = Stroke::new(1.5_f32, theme.note_text);
-    // 从第一个音的右下角滑到下一个音的左上角 (近似)
+    let (p1, p2) = match slide_type {
+        SlideType::OutUpwards | SlideType::IntoFromBelow | SlideType::ShiftSlide | SlideType::LegatoSlide => {
+            // /
+            (
+                Pos2::new(x1 + 6.0, y1 + 4.0),
+                Pos2::new(x2 - 6.0, y2 - 4.0),
+            )
+        }
+        SlideType::OutDownwards | SlideType::IntoFromAbove => {
+            // \
+            (
+                Pos2::new(x1 + 6.0, y1 - 4.0),
+                Pos2::new(x2 - 6.0, y2 + 4.0),
+            )
+        }
+    };
+    painter.line_segment([p1, p2], stroke);
+}
+
+/// 绘制击弦/勾弦弧 + H/P 标记
+pub fn draw_hopo_arc(
+    painter: &Painter,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    label: &str,
+    theme: &Theme,
+) {
+    let stroke = Stroke::new(1.2_f32, theme.note_text);
+    let mid_x = (x1 + x2) * 0.5;
+    let mid_y = (y1 + y2) * 0.5 - 8.0;
+    // 三段折线近似弧
     painter.line_segment(
-        [Pos2::new(x1 + 6.0, y1 + 2.0), Pos2::new(x2 - 6.0, y2 - 2.0)],
+        [Pos2::new(x1 + 5.0, y1 - 2.0), Pos2::new(mid_x, mid_y)],
+        stroke,
+    );
+    painter.line_segment(
+        [Pos2::new(mid_x, mid_y), Pos2::new(x2 - 5.0, y2 - 2.0)],
+        stroke,
+    );
+    painter.text(
+        Pos2::new(mid_x, mid_y - 2.0),
+        egui::Align2::CENTER_BOTTOM,
+        label,
+        egui::FontId::new(10.0, egui::FontFamily::Proportional),
+        theme.note_text,
+    );
+}
+
+/// 绘制延音弧（向左连向前一音）
+pub fn draw_tie_arc(
+    painter: &Painter,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    theme: &Theme,
+) {
+    let stroke = Stroke::new(1.2_f32, theme.note_text);
+    let mid_x = (x1 + x2) * 0.5;
+    let mid_y = (y1 + y2) * 0.5 + 7.0;
+    painter.line_segment(
+        [Pos2::new(x1 + 5.0, y1 + 2.0), Pos2::new(mid_x, mid_y)],
+        stroke,
+    );
+    painter.line_segment(
+        [Pos2::new(mid_x, mid_y), Pos2::new(x2 - 5.0, y2 + 2.0)],
         stroke,
     );
 }

@@ -2,6 +2,7 @@
 
 mod app;
 mod demo;
+mod edit;
 mod state;
 mod ui;
 

@@ -4,25 +4,48 @@
 //! 采用「单轨道 + A4 分页」排版，绘制白色 A4 页面、谱表、音符与节奏符杆。
 
 use egui::{Color32, Painter, Pos2, Rect, Stroke, Vec2};
+use bassoxide_core::effects::{HammerOnPullOff, NoteEffect};
+use bassoxide_core::measure::check_voice_duration;
+use bassoxide_core::note::NoteType;
 use bassoxide_core::song::Song;
 use bassoxide_core::types::NoteValue;
 use bassoxide_layout::engine::LayoutResult;
 use bassoxide_layout::spacing::LayoutSettings;
 
 use crate::colors::Theme;
+use crate::cursor;
 use crate::note_render;
 use crate::rhythm_render::{self, RhythmBeat};
 use crate::staff_render;
+
+/// 编辑光标（由 UI 传入；None 表示不绘制选中态）
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EditCursor {
+    pub track: usize,
+    pub measure: usize,
+    pub beat: usize,
+    pub string: u8,
+}
 
 /// 主绘制器：将布局结果渲染到画布上
 pub struct ScorePainter<'a> {
     pub settings: &'a LayoutSettings,
     pub theme: &'a Theme,
+    pub edit_cursor: Option<EditCursor>,
 }
 
 impl<'a> ScorePainter<'a> {
     pub fn new(settings: &'a LayoutSettings, theme: &'a Theme) -> Self {
-        Self { settings, theme }
+        Self {
+            settings,
+            theme,
+            edit_cursor: None,
+        }
+    }
+
+    pub fn with_edit_cursor(mut self, cursor: EditCursor) -> Self {
+        self.edit_cursor = Some(cursor);
+        self
     }
 
     /// 绘制完整乐谱（按页裁剪，保证谱表墨迹不画到纸外）
@@ -33,7 +56,6 @@ impl<'a> ScorePainter<'a> {
         layout: &LayoutResult,
         offset: egui::Vec2,
     ) {
-        // 0. 先绘制白色页面
         self.draw_pages(painter, layout, offset);
 
         for system in &layout.systems {
@@ -122,6 +144,28 @@ impl<'a> ScorePainter<'a> {
                         let m = measure_pos.measure_index;
                         let measure_x = measure_pos.x + offset.x;
 
+                        if staff.staff_type == bassoxide_layout::staff::StaffType::Tablature {
+                            if let (Some(measure), Some(master)) =
+                                (track.measures.get(m), song.master_bar(m))
+                            {
+                                let status = check_voice_duration(
+                                    measure.primary_voice(),
+                                    master.time_signature.measure_ticks(),
+                                );
+                                if !status.is_ok() {
+                                    let rect = Rect::from_min_size(
+                                        Pos2::new(measure_x, staff_y),
+                                        Vec2::new(measure_pos.width, staff.height),
+                                    );
+                                    painter.rect_filled(
+                                        rect,
+                                        0.0,
+                                        Color32::from_rgba_unmultiplied(220, 60, 60, 40),
+                                    );
+                                }
+                            }
+                        }
+
                         staff_render::draw_bar_line(
                             painter,
                             measure_x + measure_pos.width,
@@ -137,16 +181,64 @@ impl<'a> ScorePainter<'a> {
                                 .get(m)
                                 .and_then(|tracks| tracks.get(track_idx))
                             {
+                                let beat_xs: Vec<(usize, f32)> = beat_positions
+                                    .iter()
+                                    .map(|bp| (bp.beat_index, measure_x + bp.x))
+                                    .collect();
+
                                 for bp in beat_positions {
                                     if let Some(beat) = voice.beats.get(bp.beat_index) {
                                         let beat_x = measure_x + bp.x;
 
                                         if !beat.is_empty() {
                                             for note in &beat.notes {
+                                                let selected = self.edit_cursor.is_some_and(|c| {
+                                                    c.track == track_idx
+                                                        && c.measure == m
+                                                        && c.beat == bp.beat_index
+                                                        && c.string == note.string
+                                                });
                                                 self.paint_note(
-                                                    painter, staff, note, beat_x, staff_y, track,
+                                                    painter,
+                                                    staff,
+                                                    note,
+                                                    beat_x,
+                                                    staff_y,
+                                                    track,
+                                                    selected,
+                                                    &beat_xs,
+                                                    bp.beat_index,
+                                                    voice,
                                                 );
                                             }
+                                        }
+                                    }
+                                }
+
+                                if let Some(c) = self.edit_cursor {
+                                    if c.track == track_idx
+                                        && c.measure == m
+                                        && staff.staff_type
+                                            == bassoxide_layout::staff::StaffType::Tablature
+                                    {
+                                        if let Some(bp) =
+                                            beat_positions.iter().find(|b| b.beat_index == c.beat)
+                                        {
+                                            let beat_x = measure_x + bp.x;
+                                            let sy = staff_y
+                                                + bassoxide_layout::tablature::string_y_offset(
+                                                    c.string,
+                                                    staff.string_count,
+                                                    self.settings,
+                                                );
+                                            let sz = self.settings.tab_font_size + 4.0;
+                                            cursor::draw_edit_cursor(
+                                                painter,
+                                                beat_x - sz * 0.5,
+                                                sy - sz * 0.5,
+                                                sz,
+                                                sz,
+                                            );
                                         }
                                     }
                                 }
@@ -163,7 +255,6 @@ impl<'a> ScorePainter<'a> {
                                             })
                                         })
                                         .collect();
-                                    // 符杆画在谱表带下方预留区内
                                     let baseline_y = staff_y + staff.height + 2.0;
                                     rhythm_render::draw_measure_rhythm(
                                         painter,
@@ -205,7 +296,6 @@ impl<'a> ScorePainter<'a> {
         }
     }
 
-    /// 绘制单个音符（含特效）
     fn paint_note(
         &self,
         painter: &Painter,
@@ -214,6 +304,10 @@ impl<'a> ScorePainter<'a> {
         beat_x: f32,
         staff_y: f32,
         track: &bassoxide_core::track::Track,
+        is_selected: bool,
+        beat_xs: &[(usize, f32)],
+        beat_index: usize,
+        voice: &bassoxide_core::beat::Voice,
     ) {
         match staff.staff_type {
             bassoxide_layout::staff::StaffType::Standard => {
@@ -230,7 +324,7 @@ impl<'a> ScorePainter<'a> {
                     staff.string_count,
                     self.settings,
                     self.theme,
-                    false,
+                    is_selected,
                 );
 
                 let string_y = staff_y
@@ -239,17 +333,29 @@ impl<'a> ScorePainter<'a> {
                         staff.string_count,
                         self.settings,
                     );
+
+                if note.note_type == NoteType::Tie {
+                    if let Some(prev_x) = prev_same_string_x(voice, beat_xs, beat_index, note.string)
+                    {
+                        crate::effect_render::draw_tie_arc(
+                            painter, prev_x, string_y, beat_x, string_y, self.theme,
+                        );
+                    }
+                }
+
                 for effect in &note.effects {
                     match effect {
-                        bassoxide_core::effects::NoteEffect::Bend(bend) => {
-                            crate::effect_render::draw_bend(painter, bend, beat_x, string_y, self.theme);
+                        NoteEffect::Bend(bend) => {
+                            crate::effect_render::draw_bend(
+                                painter, bend, beat_x, string_y, self.theme,
+                            );
                         }
-                        bassoxide_core::effects::NoteEffect::Harmonic(harm) => {
+                        NoteEffect::Harmonic(harm) => {
                             crate::effect_render::draw_harmonic(
                                 painter, harm, beat_x, string_y, self.theme,
                             );
                         }
-                        bassoxide_core::effects::NoteEffect::Vibrato(_, _) => {
+                        NoteEffect::Vibrato(_, _) => {
                             crate::effect_render::draw_vibrato(
                                 painter,
                                 beat_x,
@@ -258,20 +364,43 @@ impl<'a> ScorePainter<'a> {
                                 self.theme,
                             );
                         }
-                        bassoxide_core::effects::NoteEffect::Slide(s) => {
-                            if !s.is_empty() {
+                        NoteEffect::Slide(s) => {
+                            if let Some(st) = s.first() {
+                                let (x2, y2) = next_same_string_pos(
+                                    voice,
+                                    beat_xs,
+                                    beat_index,
+                                    note.string,
+                                    staff_y,
+                                    staff.string_count,
+                                    self.settings,
+                                )
+                                .unwrap_or((beat_x + 28.0, string_y));
                                 crate::effect_render::draw_slide(
-                                    painter,
-                                    &s[0],
-                                    beat_x,
-                                    string_y,
-                                    beat_x + 30.0,
-                                    string_y,
-                                    self.theme,
+                                    painter, st, beat_x, string_y, x2, y2, self.theme,
                                 );
                             }
                         }
-                        bassoxide_core::effects::NoteEffect::LetRing => {
+                        NoteEffect::HammerOnPullOff(hopo) => {
+                            let (x2, y2) = next_same_string_pos(
+                                voice,
+                                beat_xs,
+                                beat_index,
+                                note.string,
+                                staff_y,
+                                staff.string_count,
+                                self.settings,
+                            )
+                            .unwrap_or((beat_x + 28.0, string_y));
+                            let label = match hopo {
+                                HammerOnPullOff::HammerOn => "H",
+                                HammerOnPullOff::PullOff => "P",
+                            };
+                            crate::effect_render::draw_hopo_arc(
+                                painter, beat_x, string_y, x2, y2, label, self.theme,
+                            );
+                        }
+                        NoteEffect::LetRing => {
                             crate::effect_render::draw_text_line(
                                 painter,
                                 "Let Ring",
@@ -281,7 +410,7 @@ impl<'a> ScorePainter<'a> {
                                 self.theme,
                             );
                         }
-                        bassoxide_core::effects::NoteEffect::PalmMute => {
+                        NoteEffect::PalmMute => {
                             crate::effect_render::draw_text_line(
                                 painter,
                                 "P.M.",
@@ -299,9 +428,7 @@ impl<'a> ScorePainter<'a> {
         }
     }
 
-    /// 绘制 A4 白色页面（含淡阴影）
     fn draw_pages(&self, painter: &Painter, layout: &LayoutResult, offset: egui::Vec2) {
-        // 纸张纯白；淡边框区分页面边界
         let paper = Color32::WHITE;
         let border = Color32::from_rgb(0xC0, 0xC9, 0xC1);
         let shadow = Color32::from_black_alpha(28);
@@ -310,10 +437,8 @@ impl<'a> ScorePainter<'a> {
             let min = Pos2::new(page.x + offset.x, page.y + offset.y);
             let rect = Rect::from_min_size(min, Vec2::new(page.width, page.height));
 
-            // 阴影
             let shadow_rect = rect.translate(Vec2::new(3.0, 4.0));
             painter.rect_filled(shadow_rect, 2.0, shadow);
-            // 纸张
             painter.rect_filled(rect, 2.0, paper);
             painter.rect_stroke(
                 rect,
@@ -323,6 +448,44 @@ impl<'a> ScorePainter<'a> {
             );
         }
     }
+}
+
+fn prev_same_string_x(
+    voice: &bassoxide_core::beat::Voice,
+    beat_xs: &[(usize, f32)],
+    beat_index: usize,
+    string: u8,
+) -> Option<f32> {
+    for i in (0..beat_index).rev() {
+        if let Some(beat) = voice.beats.get(i) {
+            if beat.note_on_string(string).is_some() {
+                return beat_xs.iter().find(|(idx, _)| *idx == i).map(|(_, x)| *x);
+            }
+        }
+    }
+    None
+}
+
+fn next_same_string_pos(
+    voice: &bassoxide_core::beat::Voice,
+    beat_xs: &[(usize, f32)],
+    beat_index: usize,
+    string: u8,
+    staff_y: f32,
+    string_count: usize,
+    settings: &LayoutSettings,
+) -> Option<(f32, f32)> {
+    for i in (beat_index + 1)..voice.beats.len() {
+        if let Some(beat) = voice.beats.get(i) {
+            if beat.note_on_string(string).is_some() {
+                let x = beat_xs.iter().find(|(idx, _)| *idx == i).map(|(_, x)| *x)?;
+                let y = staff_y
+                    + bassoxide_layout::tablature::string_y_offset(string, string_count, settings);
+                return Some((x, y));
+            }
+        }
+    }
+    None
 }
 
 fn note_value_to_num(v: NoteValue) -> u8 {
