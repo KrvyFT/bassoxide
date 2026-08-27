@@ -468,8 +468,35 @@ mod tests {
                 "sum={sum} available={available}"
             );
             assert!(system.measure_positions.len() <= 4);
+            // 固定 4 小节时等宽
+            if system.measure_positions.len() == 4 {
+                for mp in &system.measure_positions {
+                    assert!((mp.width - available / 4.0).abs() < 1.0);
+                }
+            }
         }
         // 行间距使用完整 system_gap，同页多行时应能自动分页
         assert!(layout.pages.len() >= 1);
+        assert_eq!(layout.systems.len(), 2, "8 measures / 4 per line => 2 systems");
+    }
+
+    #[test]
+    fn row_spacing_affects_page_capacity() {
+        let mut tight = LayoutSettings::default();
+        tight.system_gap = 40.0;
+        let mut loose = LayoutSettings::default();
+        loose.system_gap = 200.0;
+
+        let song = sample_song(24);
+        let layout_tight = LayoutEngine::new(tight).with_selected_track(0).layout(&song);
+        let layout_loose = LayoutEngine::new(loose).with_selected_track(0).layout(&song);
+
+        assert!(
+            layout_loose.pages.len() >= layout_tight.pages.len(),
+            "loose pages={} tight pages={}",
+            layout_loose.pages.len(),
+            layout_tight.pages.len()
+        );
+        assert!(layout_loose.pages.len() > 1 || layout_tight.pages.len() == 1);
     }
 }
