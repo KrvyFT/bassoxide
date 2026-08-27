@@ -78,6 +78,8 @@ pub struct AppState {
     pub is_light_theme: bool,
     /// 设置页面是否打开
     pub settings_open: bool,
+    /// 六线谱调弦配置窗口
+    pub tuning_editor_open: bool,
     /// 主题是否已应用到 egui
     pub theme_dirty: bool,
 }
@@ -112,6 +114,7 @@ impl Default for AppState {
             selected_track: 0,
             is_light_theme,
             settings_open: false,
+            tuning_editor_open: false,
             theme_dirty: true,
         };
         state.apply_score_prefs();
@@ -189,7 +192,11 @@ impl AppState {
         bassoxide_layout::StaffFitContext {
             show_standard: track.staff_display.show_standard,
             show_tab: track.staff_display.show_tab,
-            tab_strings: track.staff_display.tab_strings.max(1),
+            tab_strings: track
+                .tuning
+                .string_count()
+                .max(track.staff_display.tab_strings as usize)
+                .clamp(1, 8) as u8,
         }
     }
 
@@ -266,6 +273,25 @@ impl AppState {
             self.layout_settings.available_width = width;
             self.needs_relayout = true;
         }
+    }
+
+    /// 定位播放头到谱面时间；`start_playback` 为真时若未在播放则开始播放
+    pub fn seek_score_secs(&mut self, secs: f64, start_playback: bool) {
+        let secs = secs.max(0.0);
+        if let Some(player) = &self.audio_player {
+            player.seek_score_secs(secs);
+            if start_playback && player.status() != bassoxide_audio::PlaybackStatus::Playing {
+                player.play();
+            }
+        }
+        // 让音频轨视图尽量跟上播放头
+        if let Some(track) = self.audio_track.as_mut() {
+            let span = track.view_span_secs(800.0);
+            if secs < track.view_start_secs || secs > track.view_start_secs + span * 0.9 {
+                track.view_start_secs = (secs - span * 0.25).max(0.0);
+            }
+        }
+        self.status_message = format!("定位 {:.2}s", secs);
     }
 
     /// 将当前音频轨同步到播放器

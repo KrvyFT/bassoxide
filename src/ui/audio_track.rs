@@ -1,12 +1,12 @@
-//! 底部音频同步轨：波形、谱面节拍轴、检测小节线、拖拽偏移。
+//! 底部音频同步轨：波形、谱面节拍轴、检测小节线、滚轮平移、Ctrl+滚轮缩放、点击定位。
 
 use std::sync::Arc;
 
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
 use bassoxide_audio::{
-    analyze_beats, compute_peaks, decode_file, default_beats_per_bar, score_timeline, BeatAnalysis,
-    ScoreTimeline,
+    analyze_beats, compute_peaks, decode_file, default_beats_per_bar, score_timeline,
+    snap_to_nearest_beat, BeatAnalysis, ScoreTimeline,
 };
 
 use crate::state::AppState;
@@ -52,6 +52,11 @@ impl AudioTrack {
             pixels_per_second: 80.0,
             view_start_secs: 0.0,
         })
+    }
+
+    /// 可见时长（秒）
+    pub fn view_span_secs(&self, width_px: f32) -> f64 {
+        f64::from(width_px) / f64::from(self.pixels_per_second.max(1.0))
     }
 }
 
@@ -162,7 +167,7 @@ pub fn audio_track_panel(ui: &mut Ui, state: &mut AppState) {
     if state.audio_track.is_none() {
         ui.label(
             egui::RichText::new(
-                "添加录音/导唱等音频，拖动波形与上方谱面节拍轴对齐；自动检测节拍并绘制小节线。",
+                "添加录音/导唱等音频；滚轮平移 · Ctrl+滚轮缩放 · 点击节拍轴定位播放。",
             )
             .size(12.0)
             .color(palette.on_surface_variant),
@@ -191,12 +196,14 @@ pub fn audio_track_panel(ui: &mut Ui, state: &mut AppState) {
     let rect = response.rect;
 
     let mut pending_offset: Option<f64> = None;
+    let mut seek_secs: Option<f64> = None;
     let (pps, view0, sync_offset, duration_secs, peaks, beat_times, measure_times) = {
         let track = state.audio_track.as_mut().unwrap();
-        // 仅处理水平拖拽；忽略竖直分量，避免与面板/窗口交互冲突
+
+        // 拖拽：水平拖改偏移；Shift+拖平移视图
         if response.dragged_by(egui::PointerButton::Primary) {
             let delta = response.drag_delta();
-            if delta.x.abs() >= delta.y.abs() {
+            if delta.x.abs() >= delta.y.abs() && delta.x.abs() > 0.5 {
                 let dx = delta.x;
                 if ui.input(|i| i.modifiers.shift) {
                     track.view_start_secs -=
@@ -209,19 +216,53 @@ pub fn audio_track_panel(ui: &mut Ui, state: &mut AppState) {
                 }
             }
         }
-        // 滚轮缩放：只在指针位于波形区时生效，并消费滚动避免传到其它面板
+
+        // 滚轮：默认平移视图；Ctrl+滚轮缩放（以指针为锚点）
         if response.hovered() {
-            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-            if scroll.abs() > 0.1 {
-                let zoom = 1.0 + scroll * 0.002;
-                track.pixels_per_second =
-                    (track.pixels_per_second * zoom).clamp(20.0, 400.0);
+            let (scroll_y, ctrl) = ui.input(|i| (i.smooth_scroll_delta.y, i.modifiers.ctrl));
+            if scroll_y.abs() > 0.1 {
+                if ctrl {
+                    let old_pps = track.pixels_per_second;
+                    let zoom = 1.0 + scroll_y * 0.002;
+                    let new_pps = (old_pps * zoom).clamp(20.0, 400.0);
+                    if let Some(pos) = response.hover_pos() {
+                        let local_x = pos.x - rect.left();
+                        let anchor_t =
+                            track.view_start_secs + f64::from(local_x) / f64::from(old_pps.max(1.0));
+                        track.pixels_per_second = new_pps;
+                        track.view_start_secs =
+                            (anchor_t - f64::from(local_x) / f64::from(new_pps)).max(0.0);
+                    } else {
+                        track.pixels_per_second = new_pps;
+                    }
+                } else {
+                    // 滚轮向下 → 视图向右（时间增大）
+                    track.view_start_secs -=
+                        f64::from(scroll_y) / f64::from(track.pixels_per_second);
+                    track.view_start_secs = track.view_start_secs.max(0.0);
+                }
                 ui.ctx().input_mut(|i| {
                     i.smooth_scroll_delta.y = 0.0;
                     i.raw_scroll_delta.y = 0.0;
                 });
             }
         }
+
+        // 单击（非拖拽）→ 定位播放头；靠近拍点时吸附
+        if response.clicked() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let score_t = track.view_start_secs
+                    + f64::from(pos.x - rect.left()) / f64::from(track.pixels_per_second.max(1.0));
+                let snap_window = (12.0 / track.pixels_per_second) as f64;
+                let snapped = if score_tl.beat_times.is_empty() {
+                    score_t.max(0.0)
+                } else {
+                    snap_to_nearest_beat(&score_tl, score_t.max(0.0), snap_window.max(0.05))
+                };
+                seek_secs = Some(snapped);
+            }
+        }
+
         (
             track.pixels_per_second,
             track.view_start_secs,
@@ -237,6 +278,9 @@ pub fn audio_track_panel(ui: &mut Ui, state: &mut AppState) {
         if let Some(player) = &state.audio_player {
             player.set_sync_offset(off);
         }
+    }
+    if let Some(t) = seek_secs {
+        state.seek_score_secs(t, false);
     }
 
     let to_x = |score_t: f64| -> f32 { rect.left() + ((score_t - view0) as f32) * pps };
@@ -306,7 +350,7 @@ pub fn audio_track_panel(ui: &mut Ui, state: &mut AppState) {
     painter.text(
         Pos2::new(wave_rect.left() + 6.0, wave_rect.top() + 2.0),
         egui::Align2::LEFT_TOP,
-        "拖动波形对齐 · Shift+拖平移视图 · 滚轮缩放",
+        "拖动对齐 · Shift+拖平移 · 滚轮滚动 · Ctrl+滚轮缩放 · 点击定位",
         egui::FontId::proportional(10.0),
         palette.on_surface_variant,
     );

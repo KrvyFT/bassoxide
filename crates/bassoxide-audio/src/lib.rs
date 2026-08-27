@@ -6,8 +6,8 @@ pub mod error;
 pub mod playback;
 
 pub use beat::{
-    analyze_beats, compute_peaks, default_beats_per_bar, score_timeline, BeatAnalysis,
-    ScoreTimeline,
+    analyze_beats, compute_peaks, default_beats_per_bar, measure_at_score_secs,
+    score_secs_in_measure, score_timeline, snap_to_nearest_beat, BeatAnalysis, ScoreTimeline,
 };
 pub use decode::{decode_file, DecodedAudio};
 pub use error::{AudioError, Result};

@@ -55,6 +55,58 @@ pub fn score_timeline(song: &Song) -> ScoreTimeline {
     }
 }
 
+/// 谱面时间 → 小节索引与小节内归一化位置（0..1）
+pub fn measure_at_score_secs(timeline: &ScoreTimeline, secs: f64) -> (usize, f64) {
+    let secs = secs.max(0.0);
+    let times = &timeline.measure_times;
+    if times.len() < 2 {
+        return (0, 0.0);
+    }
+    for i in 0..times.len() - 1 {
+        let a = times[i];
+        let b = times[i + 1];
+        if secs < b || i + 1 == times.len() - 1 {
+            let span = (b - a).max(1e-9);
+            let frac = ((secs - a) / span).clamp(0.0, 1.0);
+            return (i, frac);
+        }
+    }
+    (times.len().saturating_sub(2), 1.0)
+}
+
+/// 点击/插值：小节 + 小节内比例 → 谱面秒
+pub fn score_secs_in_measure(timeline: &ScoreTimeline, measure: usize, frac: f64) -> f64 {
+    let times = &timeline.measure_times;
+    if times.is_empty() {
+        return 0.0;
+    }
+    let i = measure.min(times.len().saturating_sub(2));
+    let a = times[i];
+    let b = times.get(i + 1).copied().unwrap_or(timeline.duration_secs);
+    a + (b - a) * frac.clamp(0.0, 1.0)
+}
+
+/// 吸附到最近谱面拍点（阈值内）
+pub fn snap_to_nearest_beat(timeline: &ScoreTimeline, secs: f64, max_dist: f64) -> f64 {
+    let mut best = secs;
+    let mut best_d = max_dist;
+    for &t in &timeline.beat_times {
+        let d = (t - secs).abs();
+        if d < best_d {
+            best_d = d;
+            best = t;
+        }
+    }
+    for &t in &timeline.measure_times {
+        let d = (t - secs).abs();
+        if d < best_d {
+            best_d = d;
+            best = t;
+        }
+    }
+    best
+}
+
 /// 对单声道 PCM 做节拍检测
 pub fn analyze_beats(
     samples: &[f32],
@@ -275,5 +327,23 @@ mod tests {
         let peaks = compute_peaks(&[0.0, 0.5, -1.0, 0.25], 4);
         assert_eq!(peaks.len(), 4);
         assert!((peaks.iter().cloned().fold(0.0_f32, f32::max) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn score_timeline_measure_lookup_and_snap() {
+        let mut song = bassoxide_core::song::Song::default();
+        song.tempo = 120;
+        song.master_bars.push(Default::default());
+        song.master_bars.push(Default::default());
+        let tl = score_timeline(&song);
+        assert!(tl.duration_secs > 0.0);
+        assert!(tl.measure_times.len() >= 3);
+        let mid = score_secs_in_measure(&tl, 0, 0.5);
+        assert!(mid > 0.0 && mid < tl.measure_times[1]);
+        let (m, frac) = measure_at_score_secs(&tl, mid);
+        assert_eq!(m, 0);
+        assert!((frac - 0.5).abs() < 1e-6);
+        let snapped = snap_to_nearest_beat(&tl, mid, 1.0);
+        assert!(tl.beat_times.iter().any(|t| (*t - snapped).abs() < 1e-9));
     }
 }
