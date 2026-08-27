@@ -102,7 +102,6 @@ pub fn toolbar(ui: &mut Ui, state: &mut AppState) {
             ui.label(egui::RichText::new("乐谱种类:").color(palette.on_surface_variant));
 
             let track_idx = state.selected_track.min(track_count - 1);
-            let mut open_tuning = false;
             let mut set_standard: Option<bool> = None;
             let mut set_tab: Option<bool> = None;
             let mut set_string_count: Option<u8> = None;
@@ -154,18 +153,29 @@ pub fn toolbar(ui: &mut Ui, state: &mut AppState) {
                     set_string_count = Some(n);
                 }
 
+                // 可切换按钮直接翻转开关，比一次性 Button 更稳
+                let label = egui::RichText::new("调弦…").color(if state.tuning_editor_open {
+                    palette.on_primary
+                } else {
+                    palette.on_surface
+                });
                 if ui
                     .add(
-                        egui::Button::new(
-                            egui::RichText::new("调弦…").color(palette.on_primary),
-                        )
-                        .fill(palette.primary)
-                        .corner_radius(egui::CornerRadius::ZERO),
+                        egui::Button::new(label)
+                            .fill(if state.tuning_editor_open {
+                                palette.primary
+                            } else {
+                                palette.secondary_container
+                            })
+                            .selected(state.tuning_editor_open),
                     )
-                    .on_hover_text("配置每条线的空弦音高")
+                    .on_hover_text("配置每条线的空弦音高（Ctrl+T）")
                     .clicked()
                 {
-                    open_tuning = true;
+                    state.tuning_editor_open = !state.tuning_editor_open;
+                    if state.tuning_editor_open {
+                        state.status_message = "打开六线谱调弦".into();
+                    }
                 }
             }
 
@@ -188,10 +198,6 @@ pub fn toolbar(ui: &mut Ui, state: &mut AppState) {
                         needs_relayout = true;
                     }
                 }
-            }
-            if open_tuning {
-                state.tuning_editor_open = true;
-                state.status_message = "打开六线谱调弦".into();
             }
         }
     });

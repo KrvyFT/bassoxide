@@ -140,6 +140,14 @@ impl eframe::App for BassoxideApp {
         if ctx.input(|i| i.key_pressed(egui::Key::O) && i.modifiers.command) {
             self.open_file();
         }
+        if !ctx.wants_keyboard_input()
+            && ctx.input(|i| i.key_pressed(egui::Key::T) && i.modifiers.command)
+        {
+            self.state.tuning_editor_open = !self.state.tuning_editor_open;
+            if self.state.tuning_editor_open {
+                self.state.status_message = "打开六线谱调弦".into();
+            }
+        }
         // 空格：播放 / 暂停（有音频轨且未在输入框中时）
         if !ctx.wants_keyboard_input()
             && ctx.input(|i| i.key_pressed(egui::Key::Space))
