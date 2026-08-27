@@ -117,9 +117,9 @@ pub fn resolve_fit(settings: &mut LayoutSettings, ctx: StaffFitContext) -> FitRe
         let overflow = need - limit;
         result.adjusted = true;
 
-        if settings.system_gap > 16.0 {
-            let cut = (overflow * 0.55).min(settings.system_gap - 16.0).max(2.0);
-            settings.system_gap = (settings.system_gap - cut).max(16.0);
+        if settings.system_gap > 0.0 {
+            let cut = (overflow * 0.55).min(settings.system_gap).max(1.0);
+            settings.system_gap = (settings.system_gap - cut).max(0.0);
             result.messages.push(format!("行间距降至 {:.0} 以适应纸张", settings.system_gap));
             continue;
         }

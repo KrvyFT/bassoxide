@@ -125,11 +125,16 @@ fn score_settings_form(
 
     ui.label(egui::RichText::new("行间距（谱行间距）").color(palette.on_surface));
     if ui
-        .add(egui::Slider::new(&mut prefs.row_spacing, 40.0..=200.0).suffix(" px"))
+        .add(egui::Slider::new(&mut prefs.row_spacing, 0.0..=200.0).suffix(" px"))
         .changed()
     {
         *changed = true;
     }
+    ui.label(
+        egui::RichText::new("默认 10 = 无重叠最小间距 + 10px；可调更小")
+            .size(11.0)
+            .color(palette.on_surface_variant),
+    );
     ui.add_space(8.0);
 
     ui.label(egui::RichText::new("每行小节数").color(palette.on_surface));

@@ -18,7 +18,7 @@ pub fn toolbar(ui: &mut Ui, state: &mut AppState) {
             Some(song) => (
                 song.info.title.clone(),
                 song.info.artist.clone(),
-                song.tempo,
+                song.display_tempo(),
             ),
             None => return,
         };

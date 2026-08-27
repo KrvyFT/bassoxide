@@ -36,7 +36,8 @@ impl Default for ScorePrefs {
         Self {
             font_size: 13.0,
             line_spacing: 10.0,
-            row_spacing: 80.0,
+            // 无重叠最小间距为 0（system 高度已含内容）+ 10px
+            row_spacing: 10.0,
             measures_per_line: 4,
             paper_size: PaperSize::A4,
         }
@@ -139,7 +140,7 @@ impl AppState {
         self.layout_settings.tab_font_size = (p.font_size * s).max(7.0);
         self.layout_settings.tab_string_spacing = (p.line_spacing * s).max(5.0);
         self.layout_settings.staff_line_spacing = (p.line_spacing * s).max(5.0);
-        self.layout_settings.system_gap = (p.row_spacing * s).max(24.0);
+        self.layout_settings.system_gap = (p.row_spacing * s).max(0.0);
         self.layout_settings.measures_per_line = p.measures_per_line;
         let pack = if p.measures_per_line > 0 {
             (2.6 / f32::from(p.measures_per_line)).clamp(0.45, 1.0)
@@ -167,7 +168,7 @@ impl AppState {
             self.score_prefs.line_spacing =
                 (self.layout_settings.tab_string_spacing / s).clamp(8.0, 28.0);
             self.score_prefs.row_spacing =
-                (self.layout_settings.system_gap / s).clamp(16.0, 200.0);
+                (self.layout_settings.system_gap / s).clamp(0.0, 200.0);
             if let Some(msg) = fit.summary() {
                 self.status_message = format!("自动适配: {msg}");
             }
@@ -225,7 +226,7 @@ impl AppState {
             song.info.title.as_str(),
             track_count,
             measure_count,
-            song.tempo,
+            song.display_tempo(),
         );
         // 换谱后按新拍号/速度重新分析已有音频的小节线
         if let Some(track) = self.audio_track.as_mut() {

@@ -55,7 +55,7 @@ impl Default for LayoutSettings {
             min_measure_width: 80.0,
             min_beat_spacing: 22.0,
             track_gap: 50.0,
-            system_gap: 80.0,
+            system_gap: 10.0,
             margin_left: 40.0,
             margin_top: 60.0,
             available_width: 1200.0,

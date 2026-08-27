@@ -1,6 +1,9 @@
-//! PCM 文件回放（非 MIDI）。谱面时间由 UI 帧时钟推进，音频回调只读位置取采样。
+//! PCM 文件回放（非 MIDI）。
+//!
+//! 有声卡时：音频回调推进谱面时间并出声（避免 UI 帧率导致卡顿）。
+//! 无声卡时：由 UI `tick` 推进播放头。
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -18,6 +21,8 @@ pub enum PlaybackStatus {
 struct CallbackState {
     samples: Mutex<Arc<Vec<f32>>>,
     source_sr: Mutex<u32>,
+    /// 输出设备采样率（回调推进时间用）
+    device_sr: AtomicU32,
     score_secs: AtomicU64,
     sync_offset: AtomicU64,
     playing: AtomicBool,
@@ -29,6 +34,8 @@ pub struct AudioPlayer {
     _stream: Option<Stream>,
     status: Mutex<PlaybackStatus>,
     paused_score: Mutex<f64>,
+    /// 无输出设备时为 true，需 UI tick 推进
+    silent: bool,
 }
 
 impl AudioPlayer {
@@ -47,6 +54,7 @@ impl AudioPlayer {
             state: Arc::new(CallbackState {
                 samples: Mutex::new(Arc::new(Vec::new())),
                 source_sr: Mutex::new(44100),
+                device_sr: AtomicU32::new(44100),
                 score_secs: AtomicU64::new(0f64.to_bits()),
                 sync_offset: AtomicU64::new(0f64.to_bits()),
                 playing: AtomicBool::new(false),
@@ -54,6 +62,7 @@ impl AudioPlayer {
             _stream: None,
             status: Mutex::new(PlaybackStatus::Stopped),
             paused_score: Mutex::new(0.0),
+            silent: true,
         }
     }
 
@@ -68,10 +77,12 @@ impl AudioPlayer {
         let sample_format = config.sample_format();
         let stream_config: StreamConfig = config.into();
         let channels = stream_config.channels as usize;
+        let device_sr = stream_config.sample_rate.0;
 
         let state = Arc::new(CallbackState {
             samples: Mutex::new(Arc::new(Vec::new())),
             source_sr: Mutex::new(44100),
+            device_sr: AtomicU32::new(device_sr),
             score_secs: AtomicU64::new(0f64.to_bits()),
             sync_offset: AtomicU64::new(0f64.to_bits()),
             playing: AtomicBool::new(false),
@@ -80,7 +91,6 @@ impl AudioPlayer {
         let state_cb = state.clone();
         let err_fn = |e| tracing::error!("音频流错误: {e}");
 
-        // 回调只负责出声，不推进时间（时间由 UI tick 统一推进）
         let stream = match sample_format {
             SampleFormat::F32 => device.build_output_stream(
                 &stream_config,
@@ -120,7 +130,12 @@ impl AudioPlayer {
             _stream: Some(stream),
             status: Mutex::new(PlaybackStatus::Stopped),
             paused_score: Mutex::new(0.0),
+            silent: false,
         })
+    }
+
+    pub fn is_silent(&self) -> bool {
+        self.silent
     }
 
     pub fn set_audio(&self, samples: Arc<Vec<f32>>, sample_rate: u32) {
@@ -180,6 +195,14 @@ impl AudioPlayer {
         }
     }
 
+    pub fn toggle_play_pause(&self) {
+        if self.status() == PlaybackStatus::Playing {
+            self.pause();
+        } else {
+            self.play();
+        }
+    }
+
     pub fn stop(&self) {
         self.state.playing.store(false, Ordering::Relaxed);
         self.state
@@ -195,20 +218,29 @@ impl AudioPlayer {
         *self.paused_score.lock().unwrap() = secs;
     }
 
-    /// 由 UI 每帧调用：推进谱面时间；到音频末尾自动停止。
+    /// 无声卡模式下由 UI 每帧调用推进时间；有声卡时回调已推进，此处只同步结束状态。
     pub fn tick(&self, dt_secs: f64) {
         if *self.status.lock().unwrap() != PlaybackStatus::Playing {
             return;
         }
         if !self.state.playing.load(Ordering::Relaxed) {
-            // 回调侧可能已停；同步状态
             *self.status.lock().unwrap() = PlaybackStatus::Stopped;
             return;
         }
+
+        if !self.silent {
+            // 时钟由音频回调推进；检测是否已到末尾
+            self.check_eof();
+            return;
+        }
+
         let dt = dt_secs.clamp(0.0, 0.1);
         let score = self.score_position_secs() + dt;
         self.state.score_secs.store(score.to_bits(), Ordering::Relaxed);
+        self.check_eof();
+    }
 
+    fn check_eof(&self) {
         let samples = self.state.samples.lock().unwrap().clone();
         let sr = *self.state.source_sr.lock().unwrap();
         if samples.is_empty() || sr == 0 {
@@ -216,9 +248,29 @@ impl AudioPlayer {
         }
         let sync = self.sync_offset();
         let dur = samples.len() as f64 / f64::from(sr);
-        if score - sync >= dur {
+        if self.score_position_secs() - sync >= dur {
             self.stop();
         }
+    }
+}
+
+fn sample_at(samples: &[f32], source_sr: u32, audio_t: f64) -> f32 {
+    if audio_t < 0.0 || samples.is_empty() || source_sr == 0 {
+        return 0.0;
+    }
+    let duration = samples.len() as f64 / f64::from(source_sr);
+    if audio_t >= duration {
+        return 0.0;
+    }
+    let idx_f = audio_t * f64::from(source_sr);
+    let idx = idx_f.floor() as usize;
+    if idx + 1 < samples.len() {
+        let frac = (idx_f - idx as f64) as f32;
+        samples[idx] * (1.0 - frac) + samples[idx + 1] * frac
+    } else if idx < samples.len() {
+        samples[idx]
+    } else {
+        0.0
     }
 }
 
@@ -230,33 +282,30 @@ fn fill_output(data: &mut [f32], channels: usize, state: &CallbackState) {
 
     let samples = state.samples.lock().unwrap().clone();
     let source_sr = *state.source_sr.lock().unwrap();
+    let device_sr = state.device_sr.load(Ordering::Relaxed).max(1);
     if samples.is_empty() || source_sr == 0 {
         return;
     }
 
     let sync = f64::from_bits(state.sync_offset.load(Ordering::Relaxed));
-    let score = f64::from_bits(state.score_secs.load(Ordering::Relaxed));
+    let mut score = f64::from_bits(state.score_secs.load(Ordering::Relaxed));
+    let dt = 1.0 / f64::from(device_sr);
     let duration = samples.len() as f64 / f64::from(source_sr);
-    let audio_t = score - sync;
-
-    // 整块缓冲用同一时刻近似（精细相位由 UI tick 高频刷新）
-    let mut sample = 0.0_f32;
-    if audio_t >= 0.0 && audio_t < duration {
-        let idx_f = audio_t * f64::from(source_sr);
-        let idx = idx_f.floor() as usize;
-        if idx + 1 < samples.len() {
-            let frac = (idx_f - idx as f64) as f32;
-            sample = samples[idx] * (1.0 - frac) + samples[idx + 1] * frac;
-        } else if idx < samples.len() {
-            sample = samples[idx];
-        }
-    }
 
     for frame in data.chunks_mut(channels) {
+        let audio_t = score - sync;
+        let sample = sample_at(&samples, source_sr, audio_t);
         for ch in frame.iter_mut() {
             *ch = sample;
         }
+        score += dt;
+        if audio_t >= duration {
+            state.playing.store(false, Ordering::Relaxed);
+            break;
+        }
     }
+
+    state.score_secs.store(score.to_bits(), Ordering::SeqCst);
 }
 
 #[cfg(test)]
@@ -264,17 +313,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tick_advances_while_playing() {
+    fn tick_advances_while_playing_silent() {
         let player = AudioPlayer::new_silent();
-        let samples = Arc::new(vec![0.1_f32; 44100 * 4]); // 4s
+        let samples = Arc::new(vec![0.1_f32; 44100 * 4]);
         player.set_audio(samples, 44100);
         player.play();
         assert_eq!(player.status(), PlaybackStatus::Playing);
-        // tick 会把单帧 dt 钳制到 0.1，避免掉帧跳表
         player.tick(0.5);
         let t = player.score_position_secs();
         assert!((t - 0.1).abs() < 1e-6, "t={t}");
         player.tick(0.05);
         assert!((player.score_position_secs() - 0.15).abs() < 1e-6);
+    }
+
+    #[test]
+    fn fill_output_advances_score() {
+        let state = CallbackState {
+            samples: Mutex::new(Arc::new(vec![0.5_f32; 44100])),
+            source_sr: Mutex::new(44100),
+            device_sr: AtomicU32::new(44100),
+            score_secs: AtomicU64::new(0f64.to_bits()),
+            sync_offset: AtomicU64::new(0f64.to_bits()),
+            playing: AtomicBool::new(true),
+        };
+        let mut buf = vec![0.0f32; 441]; // 10ms @ 44.1k
+        fill_output(&mut buf, 1, &state);
+        let t = f64::from_bits(state.score_secs.load(Ordering::Relaxed));
+        assert!((t - 0.01).abs() < 1e-4, "t={t}");
+        assert!(buf.iter().any(|s| *s > 0.0));
     }
 }

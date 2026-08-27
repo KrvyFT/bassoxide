@@ -151,6 +151,16 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                             }
                         }
                     }
+                    // MasterBar 内嵌 Tempo（部分导出）
+                    if let Some(tempo_node) = node.descendants().find(|n| n.has_tag_name("Tempo")) {
+                        if let Some(text) = tempo_node.text() {
+                            if let Ok(bpm) = text.trim().split_whitespace().next().unwrap_or("").parse::<u16>() {
+                                if bpm > 0 {
+                                    mb.tempo = Some(bpm);
+                                }
+                            }
+                        }
+                    }
                     if id.is_empty() {
                         continue;
                     }
@@ -487,9 +497,69 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
         song.master_bars.push(MasterBar::default());
     }
 
+    // 从 MasterTrack Automations 读取 Tempo（GPIF: <Value>120 2</Value>）
+    apply_gp7_tempo_automations(&doc, &mut song);
+
+    // 若仍无速度：取首个 MasterBar.tempo，否则保持默认
+    if song.tempo == 120 {
+        if let Some(bpm) = song.master_bars.iter().find_map(|mb| mb.tempo) {
+            if bpm > 0 {
+                song.tempo = bpm;
+            }
+        }
+    }
+
     song.tracks = track_objects;
 
     Ok(song)
+}
+
+/// 解析 MasterTrack 速度自动化，写入 `song.tempo` 与对应小节的 `MasterBar.tempo`
+fn apply_gp7_tempo_automations(doc: &Document, song: &mut Song) {
+    let Some(mt) = doc.descendants().find(|n| n.has_tag_name("MasterTrack")) else {
+        return;
+    };
+    let Some(autos) = mt.children().find(|n| n.has_tag_name("Automations")) else {
+        return;
+    };
+
+    let mut first_bpm: Option<u16> = None;
+    for auto in autos.children().filter(|n| n.has_tag_name("Automation")) {
+        let is_tempo = auto
+            .children()
+            .find(|n| n.has_tag_name("Type"))
+            .and_then(|n| n.text())
+            .map(|t| t.trim() == "Tempo")
+            .unwrap_or(false);
+        if !is_tempo {
+            continue;
+        }
+        let bpm = auto
+            .children()
+            .find(|n| n.has_tag_name("Value"))
+            .and_then(|n| n.text())
+            .and_then(|t| t.trim().split_whitespace().next()?.parse::<u16>().ok())
+            .filter(|b| *b > 0);
+        let Some(bpm) = bpm else {
+            continue;
+        };
+        let bar = auto
+            .children()
+            .find(|n| n.has_tag_name("Bar"))
+            .and_then(|n| n.text())
+            .and_then(|t| t.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+
+        if first_bpm.is_none() {
+            first_bpm = Some(bpm);
+        }
+        if let Some(mb) = song.master_bars.get_mut(bar) {
+            mb.tempo = Some(bpm);
+        }
+    }
+    if let Some(bpm) = first_bpm {
+        song.tempo = bpm;
+    }
 }
 
 fn xml_child_u8(node: Node<'_, '_>, tag: &str) -> Option<u8> {
@@ -541,6 +611,8 @@ mod tests {
         };
         let song = parse_score_gpif(&xml).expect("Failed to parse GPIF");
         assert!(!song.tracks.is_empty());
+        assert_eq!(song.tempo, 200, "应从 MasterTrack Tempo 自动化读取 BPM");
+        assert_eq!(song.display_tempo(), 200);
         if song.tracks.len() >= 3 {
             assert_eq!(song.tracks[0].midi_program, 30, "Lead Guitar 应为 Distortion Guitar");
             assert_eq!(song.tracks[2].midi_program, 33, "贝斯轨应使用文件内 GM 33");

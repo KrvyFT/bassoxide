@@ -454,7 +454,7 @@ mod tests {
         assert_eq!(settings.measures_per_line, 4);
         assert!((settings.tab_font_size - 13.0).abs() < f32::EPSILON);
         assert!((settings.tab_string_spacing - 10.0).abs() < f32::EPSILON);
-        assert!((settings.system_gap - 80.0).abs() < f32::EPSILON);
+        assert!((settings.system_gap - 10.0).abs() < f32::EPSILON);
 
         let song = sample_song(8);
         let engine = LayoutEngine::new(settings.clone()).with_selected_track(0);

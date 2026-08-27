@@ -140,6 +140,15 @@ impl eframe::App for BassoxideApp {
         if ctx.input(|i| i.key_pressed(egui::Key::O) && i.modifiers.command) {
             self.open_file();
         }
+        // 空格：播放 / 暂停（有音频轨且未在输入框中时）
+        if !ctx.wants_keyboard_input()
+            && ctx.input(|i| i.key_pressed(egui::Key::Space))
+            && self.state.audio_track.is_some()
+        {
+            if let Some(player) = &self.state.audio_player {
+                player.toggle_play_pause();
+            }
+        }
 
         // 更新可用宽度
         let available_width = ctx.screen_rect().width();
@@ -225,7 +234,7 @@ impl eframe::App for BassoxideApp {
                 crate::ui::timeline::timeline_panel(ui, &mut self.state);
             });
 
-        // 播放：用帧时间推进播放头（无声卡也能走表）
+        // 播放：有声卡时由音频回调推进时间；无声卡时用帧 dt 推进。始终请求重绘以刷新播放头。
         if let Some(player) = &self.state.audio_player {
             if player.status() == bassoxide_audio::PlaybackStatus::Playing {
                 let dt = ctx.input(|i| i.stable_dt) as f64;

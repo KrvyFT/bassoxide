@@ -26,15 +26,11 @@ pub fn transport_bar(ui: &mut Ui, state: &mut AppState) {
         .fill(palette.primary);
         if ui
             .add_enabled(has_audio, play_btn)
-            .on_hover_text("播放已加载的外部音频轨")
+            .on_hover_text("播放/暂停已加载的外部音频轨（空格）")
             .clicked()
         {
             if let Some(player) = &state.audio_player {
-                if is_playing {
-                    player.pause();
-                } else {
-                    player.play();
-                }
+                player.toggle_play_pause();
             }
         }
 
