@@ -72,8 +72,6 @@ pub struct AppState {
     pub selected_track: usize,
     /// 是否浅色主题（Material You 默认浅色）
     pub is_light_theme: bool,
-    /// 打开的轨道配置弹窗（轨道索引）
-    pub track_config_popup: Option<usize>,
     /// 设置页面是否打开
     pub settings_open: bool,
     /// 主题是否已应用到 egui
@@ -109,7 +107,6 @@ impl Default for AppState {
             zoom_factor: 1.0,
             selected_track: 0,
             is_light_theme,
-            track_config_popup: None,
             settings_open: false,
             theme_dirty: true,
         };
@@ -176,7 +173,6 @@ impl AppState {
         let measure_count = song.measure_count();
         self.file_path = path;
         self.selected_track = 0;
-        self.track_config_popup = None;
         self.status_message = format!(
             "已加载: {} | {} 轨道, {} 小节, {} BPM",
             song.info.title.as_str(),
