@@ -9,10 +9,12 @@ pub enum MenuAction {
     None,
     OpenFile,
     Quit,
+    LightTheme,
+    DarkTheme,
 }
 
 /// 绘制菜单栏
-pub fn menu_bar(ui: &mut Ui, _state: &AppState) -> MenuAction {
+pub fn menu_bar(ui: &mut Ui, state: &AppState) -> MenuAction {
     let mut action = MenuAction::None;
 
     egui::menu::bar(ui, |ui| {
@@ -29,10 +31,18 @@ pub fn menu_bar(ui: &mut Ui, _state: &AppState) -> MenuAction {
         });
 
         ui.menu_button("视图", |ui| {
-            if ui.button("深色主题").clicked() {
+            if ui
+                .selectable_label(state.is_light_theme, "浅色主题")
+                .clicked()
+            {
+                action = MenuAction::LightTheme;
                 ui.close_menu();
             }
-            if ui.button("浅色主题").clicked() {
+            if ui
+                .selectable_label(!state.is_light_theme, "深色主题")
+                .clicked()
+            {
+                action = MenuAction::DarkTheme;
                 ui.close_menu();
             }
         });

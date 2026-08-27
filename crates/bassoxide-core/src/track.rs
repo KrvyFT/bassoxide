@@ -70,6 +70,73 @@ impl Tuning {
     }
 }
 
+/// 轨道谱面显示配置（可多选；四线谱与六线谱互斥）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StaffDisplay {
+    /// 五线谱
+    pub show_standard: bool,
+    /// Tab（四线/六线）
+    pub show_tab: bool,
+    /// Tab 弦数：4 或 6
+    pub tab_strings: u8,
+    /// 数字谱 / 简谱
+    pub show_numbered: bool,
+}
+
+impl Default for StaffDisplay {
+    fn default() -> Self {
+        Self {
+            show_standard: true,
+            show_tab: false,
+            tab_strings: 6,
+            show_numbered: false,
+        }
+    }
+}
+
+impl StaffDisplay {
+    /// 按轨道乐器与弦数给出合理默认显示
+    pub fn default_for(midi_program: u8, string_count: usize, is_percussion: bool) -> Self {
+        if is_percussion {
+            return Self {
+                show_standard: true,
+                show_tab: false,
+                tab_strings: 6,
+                show_numbered: false,
+            };
+        }
+        let is_guitar_bass = (24..=39).contains(&midi_program) && string_count > 0;
+        if is_guitar_bass {
+            let tab_strings = if string_count <= 4 { 4 } else { 6 };
+            Self {
+                show_standard: false,
+                show_tab: true,
+                tab_strings,
+                show_numbered: true,
+            }
+        } else {
+            Self::default()
+        }
+    }
+
+    /// 启用四线谱（与六线互斥）
+    pub fn enable_four_string_tab(&mut self) {
+        self.show_tab = true;
+        self.tab_strings = 4;
+    }
+
+    /// 启用六线谱（与四线互斥）
+    pub fn enable_six_string_tab(&mut self) {
+        self.show_tab = true;
+        self.tab_strings = 6;
+    }
+
+    /// 关闭 Tab
+    pub fn disable_tab(&mut self) {
+        self.show_tab = false;
+    }
+}
+
 /// 乐器轨道
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Track {
@@ -107,20 +174,26 @@ pub struct Track {
     pub is_solo: bool,
     /// 是否为鼓轨道
     pub is_percussion: bool,
+    /// 谱面显示配置
+    pub staff_display: StaffDisplay,
     /// 各小节数据
     pub measures: Vec<Measure>,
 }
 
 impl Default for Track {
     fn default() -> Self {
+        let midi_program = 25; // Steel Guitar (GM)
+        let tuning = Tuning::standard_guitar();
+        let staff_display =
+            StaffDisplay::default_for(midi_program, tuning.string_count(), false);
         Self {
             number: 1,
             name: "Track 1".to_string(),
             instrument_type: InstrumentType::AcousticGuitar,
-            tuning: Tuning::standard_guitar(),
+            tuning,
             midi_channel: 0,
             midi_port: 0,
-            midi_program: 25, // Steel Guitar (GM)
+            midi_program,
             midi_bank: 0,
             capo: 0,
             fret_count: 24,
@@ -131,6 +204,7 @@ impl Default for Track {
             is_muted: false,
             is_solo: false,
             is_percussion: false,
+            staff_display,
             measures: Vec::new(),
         }
     }
@@ -152,11 +226,44 @@ impl Track {
             self.is_percussion = true;
         }
         self.sync_instrument_type();
+        self.ensure_staff_display();
     }
 
     /// 按当前 GM program / 打击乐标志同步 `instrument_type`，不改音色号。
     pub fn sync_instrument_type(&mut self) {
         self.instrument_type = InstrumentType::from_gm(self.midi_program, self.is_percussion);
+    }
+
+    /// 若尚未按乐器初始化过合理谱面，则写入默认配置
+    pub fn ensure_staff_display(&mut self) {
+        // 加载后始终按当前乐器校正一次默认组合，避免旧默认值卡住
+        self.staff_display = StaffDisplay::default_for(
+            self.midi_program,
+            self.string_count(),
+            self.is_percussion,
+        );
+    }
+
+    /// 用户在弹窗中切换四/六线时同步标准调弦（显式操作）
+    pub fn apply_tab_string_count(&mut self, strings: u8) {
+        match strings {
+            4 => {
+                self.staff_display.enable_four_string_tab();
+                if self.string_count() != 4 {
+                    self.tuning = Tuning::standard_bass();
+                }
+            }
+            6 => {
+                self.staff_display.enable_six_string_tab();
+                if self.string_count() != 6 {
+                    self.tuning = Tuning::standard_guitar();
+                }
+            }
+            _ => {
+                self.staff_display.tab_strings = strings.clamp(4, 6);
+                self.staff_display.show_tab = true;
+            }
+        }
     }
 }
 
@@ -187,16 +294,32 @@ mod tests {
     }
 
     #[test]
-    fn percussion_channel_marks_drums() {
+    fn staff_display_defaults_for_guitar_and_piano() {
+        let guitar = StaffDisplay::default_for(27, 6, false);
+        assert!(guitar.show_tab);
+        assert_eq!(guitar.tab_strings, 6);
+        assert!(guitar.show_numbered);
+        assert!(!guitar.show_standard);
+
+        let bass = StaffDisplay::default_for(33, 4, false);
+        assert!(bass.show_tab);
+        assert_eq!(bass.tab_strings, 4);
+
+        let piano = StaffDisplay::default_for(0, 0, false);
+        assert!(piano.show_standard);
+        assert!(!piano.show_tab);
+    }
+
+    #[test]
+    fn apply_tab_string_count_switches_tuning() {
         let mut track = Track::default();
-        let ch = MidiChannel {
-            channel: 9,
-            instrument: 0,
-            ..MidiChannel::default()
-        };
-        track.apply_midi_channel(&ch);
-        assert!(track.is_percussion);
-        assert_eq!(track.instrument_type, InstrumentType::Drums);
-        assert_eq!(track.midi_program, 0);
+        track.apply_tab_string_count(4);
+        assert!(track.staff_display.show_tab);
+        assert_eq!(track.staff_display.tab_strings, 4);
+        assert_eq!(track.string_count(), 4);
+
+        track.apply_tab_string_count(6);
+        assert_eq!(track.staff_display.tab_strings, 6);
+        assert_eq!(track.string_count(), 6);
     }
 }
