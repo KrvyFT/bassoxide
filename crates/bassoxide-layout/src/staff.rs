@@ -22,8 +22,6 @@ pub enum StaffType {
     Standard,
     /// 六线谱 (Tab)
     Tablature,
-    /// 简谱 (Numbered)
-    Numbered,
     /// 斜线记谱
     Slash,
 }

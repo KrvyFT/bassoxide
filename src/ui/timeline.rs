@@ -272,16 +272,6 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
                         apply_relayout = true;
                     }
 
-                    let mut numbered = track.staff_display.show_numbered;
-                    if ui
-                        .checkbox(&mut numbered, "数字谱")
-                        .on_hover_text("简谱 / 数字谱")
-                        .changed()
-                    {
-                        track.staff_display.show_numbered = numbered;
-                        apply_relayout = true;
-                    }
-
                     let four_on =
                         track.staff_display.show_tab && track.staff_display.tab_strings == 4;
                     let mut four = four_on;

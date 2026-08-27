@@ -79,8 +79,6 @@ pub struct StaffDisplay {
     pub show_tab: bool,
     /// Tab 弦数：4 或 6
     pub tab_strings: u8,
-    /// 数字谱 / 简谱
-    pub show_numbered: bool,
 }
 
 impl Default for StaffDisplay {
@@ -89,7 +87,6 @@ impl Default for StaffDisplay {
             show_standard: true,
             show_tab: false,
             tab_strings: 6,
-            show_numbered: false,
         }
     }
 }
@@ -102,7 +99,6 @@ impl StaffDisplay {
                 show_standard: true,
                 show_tab: false,
                 tab_strings: 6,
-                show_numbered: false,
             };
         }
         let is_guitar_bass = (24..=39).contains(&midi_program) && string_count > 0;
@@ -112,7 +108,6 @@ impl StaffDisplay {
                 show_standard: false,
                 show_tab: true,
                 tab_strings,
-                show_numbered: true,
             }
         } else {
             Self::default()
@@ -298,7 +293,6 @@ mod tests {
         let guitar = StaffDisplay::default_for(27, 6, false);
         assert!(guitar.show_tab);
         assert_eq!(guitar.tab_strings, 6);
-        assert!(guitar.show_numbered);
         assert!(!guitar.show_standard);
 
         let bass = StaffDisplay::default_for(33, 4, false);

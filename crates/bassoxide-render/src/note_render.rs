@@ -46,93 +46,6 @@ pub fn draw_tab_note(
     );
 }
 
-/// 绘制数字谱/简谱 (Numbered Notation) 音符
-pub fn draw_numbered_note(
-    painter: &Painter,
-    note: &Note,
-    x: f32,
-    staff_y: f32,
-    tuning: &bassoxide_core::track::Tuning,
-    theme: &Theme,
-    is_selected: bool,
-) {
-    let midi_note = note.midi_note.max(tuning.midi_note(note.string, note.fret).unwrap_or(0));
-    if midi_note == 0 { return; }
-
-    // 假设 C 大调 (MIDI 60 = 中音 1)
-    let octave = (midi_note / 12) as i32 - 1; 
-    let pitch_class = midi_note % 12;
-
-    let (digit, is_sharp) = match pitch_class {
-        0 => ("1", false),
-        1 => ("1", true), // 1#
-        2 => ("2", false),
-        3 => ("2", true), // 2#
-        4 => ("3", false),
-        5 => ("4", false),
-        6 => ("4", true), // 4#
-        7 => ("5", false),
-        8 => ("5", true), // 5#
-        9 => ("6", false),
-        10 => ("6", true), // 6#
-        11 => ("7", false),
-        _ => ("0", false),
-    };
-
-    let font = egui::FontId::new(16.0, egui::FontFamily::Proportional);
-    let color = if is_selected { theme.selected_note } else { theme.note_text };
-    let center = Pos2::new(x, staff_y + 10.0);
-
-    // 绘制升号
-    if is_sharp {
-        let acc_font = egui::FontId::new(12.0, egui::FontFamily::Proportional);
-        painter.text(
-            Pos2::new(x - 8.0, staff_y + 8.0),
-            egui::Align2::RIGHT_CENTER,
-            "#",
-            acc_font,
-            color,
-        );
-    }
-
-    // 绘制简谱主数字
-    painter.text(
-        center,
-        egui::Align2::CENTER_CENTER,
-        digit,
-        font,
-        color,
-    );
-
-    // 绘制高低八度点 (中音 octave = 4)
-    // 吉他记谱经常比实际低八度，所以为了符合常理我们把 MIDI 的 Octave 3 视作简谱中音 (1无点)
-    // 也就是说 octave == 3 时画无点
-    let dot_radius = 1.5;
-    let dot_spacing = 4.0;
-    
-    if octave > 3 {
-        // 高音点 (上方)
-        let dots = octave - 3;
-        for i in 0..dots {
-            painter.circle_filled(
-                Pos2::new(x, staff_y - 2.0 - (i as f32 * dot_spacing)),
-                dot_radius,
-                color,
-            );
-        }
-    } else if octave < 3 {
-        // 低音点 (下方)
-        let dots = 3 - octave;
-        for i in 0..dots {
-            painter.circle_filled(
-                Pos2::new(x, staff_y + 22.0 + (i as f32 * dot_spacing)),
-                dot_radius,
-                color,
-            );
-        }
-    }
-}
-
 /// 计算 MIDI 音高在五线谱上的纵向位置 (0 = 第一线/最底线, 0.5 = 第一间)
 fn pitch_to_staff_offset(midi_note: u8) -> f32 {
     // 简单算法（忽略调号临时升降号，仅假设 C 大调）：
@@ -173,6 +86,7 @@ pub fn draw_standard_note(
     x: f32,
     staff_y: f32,
     tuning: &bassoxide_core::track::Tuning,
+    settings: &LayoutSettings,
     theme: &Theme,
 ) {
     // 1. 获取音高
@@ -180,15 +94,11 @@ pub fn draw_standard_note(
     if midi_note == 0 { return; }
 
     // 2. 计算五线谱相对高度
-    // 五线谱 0.0 = 最底线, 4.0 = 最顶线。绘制是从上往下的 y 坐标，所以最底线是 y + 4 * spacing
-    // 注意，吉他五线谱实际记谱比实际音高高八度 (高八度记谱)。我们这里按照实际音高直接映射，低音会需要很多下加线。
-    // 为了简单显示，我们将吉他谱自动提升一个八度计算 (+12 MIDI)
     let display_note = midi_note + 12;
     let offset = pitch_to_staff_offset(display_note);
     
     // 3. 映射到屏幕坐标
-    // 五线谱间距 (standard_height = 24.0, 4个间隙，每个 6.0)
-    let line_spacing = 6.0;
+    let line_spacing = settings.staff_line_spacing;
     
     // 最底线 (第 1 线) 位于 s = 4
     let bottom_line_y = staff_y + 4.0 * line_spacing;

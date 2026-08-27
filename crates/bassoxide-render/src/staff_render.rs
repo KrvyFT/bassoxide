@@ -37,8 +37,7 @@ pub fn draw_standard_staff(
     theme: &Theme,
 ) {
     let stroke = Stroke::new(1.0_f32, theme.staff_line);
-    // 五线谱间距通常比六线谱稍微紧凑一点，这里复用 tab_string_spacing 作为基础单位
-    let line_spacing = settings.tab_string_spacing * 0.8;
+    let line_spacing = settings.staff_line_spacing;
 
     for s in 0..5 {
         let line_y = y + s as f32 * line_spacing;
@@ -47,27 +46,6 @@ pub fn draw_standard_staff(
             stroke,
         );
     }
-}
-
-/// 绘制数字谱/简谱 (Numbered Notation) 的基线
-pub fn draw_numbered_staff(
-    painter: &Painter,
-    x: f32,
-    y: f32,
-    width: f32,
-    _settings: &LayoutSettings,
-    theme: &Theme,
-) {
-    // 简谱无需完整的谱线，为了对齐视觉，画一条很淡的虚线或实线作为基准
-    // y 为谱表的起始位置，简谱高 20.0，我们在 y+10 处画中心线
-    let mut color = theme.staff_line;
-    color[3] = (color[3] as f32 * 0.3) as u8; // 30% 透明度
-    let stroke = Stroke::new(1.0_f32, color);
-    
-    painter.line_segment(
-        [Pos2::new(x, y + 10.0), Pos2::new(x + width, y + 10.0)],
-        stroke,
-    );
 }
 
 /// 绘制小节线
@@ -133,32 +111,44 @@ pub fn draw_tab_clef(
     }
 }
 
-/// 绘制拍号
+/// 绘制拍号（上下分数对齐，中间横线）
 pub fn draw_time_signature(
     painter: &Painter,
     x: f32,
     y: f32,
     numerator: u8,
     denominator: u8,
-    string_count: usize,
+    staff_height: f32,
     settings: &LayoutSettings,
     theme: &Theme,
 ) {
-    let total_height = settings.tab_staff_height(string_count);
-    let font = egui::FontId::new(16.0, egui::FontFamily::Monospace);
+    let font_size = (settings.tab_font_size * 1.35).clamp(12.0, 28.0);
+    let font = egui::FontId::new(font_size, egui::FontFamily::Proportional);
+    let cx = x;
+    let mid_y = y + staff_height * 0.5;
+    let gap = (font_size * 0.55).max(8.0);
 
-    // 分子在上半部分
+    // 分子
     painter.text(
-        Pos2::new(x, y + total_height * 0.25),
-        egui::Align2::CENTER_CENTER,
+        Pos2::new(cx, mid_y - gap),
+        egui::Align2::CENTER_BOTTOM,
         numerator.to_string(),
         font.clone(),
         theme.time_sig_color,
     );
-    // 分母在下半部分
+    // 分数线
+    let bar_w = (font_size * 0.85).max(10.0);
+    painter.line_segment(
+        [
+            Pos2::new(cx - bar_w * 0.5, mid_y),
+            Pos2::new(cx + bar_w * 0.5, mid_y),
+        ],
+        Stroke::new(1.5_f32, theme.time_sig_color),
+    );
+    // 分母
     painter.text(
-        Pos2::new(x, y + total_height * 0.75),
-        egui::Align2::CENTER_CENTER,
+        Pos2::new(cx, mid_y + gap),
+        egui::Align2::CENTER_TOP,
         denominator.to_string(),
         font,
         theme.time_sig_color,
