@@ -47,6 +47,11 @@ impl Beat {
         self.notes.iter().find(|n| n.string == string)
     }
 
+    /// 获取指定弦上的音符（可变）
+    pub fn note_on_string_mut(&mut self, string: u8) -> Option<&mut Note> {
+        self.notes.iter_mut().find(|n| n.string == string)
+    }
+
     /// 是否有和弦图
     pub fn has_chord(&self) -> bool {
         self.chord.is_some()

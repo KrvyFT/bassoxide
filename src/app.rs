@@ -126,6 +126,107 @@ impl BassoxideApp {
             }
         }
     }
+
+    /// 谱面编辑快捷键（方向键、插删、效果等）
+    fn handle_edit_keys(&mut self, ctx: &egui::Context) {
+        use bassoxide_core::types::NoteValue;
+        use crate::edit::{self, CursorMove};
+
+        if self.state.song.is_none() {
+            return;
+        }
+
+        let mods = ctx.input(|i| i.modifiers);
+        let cmd = mods.command;
+
+        // Ctrl+↑/↓ 改弦；普通 ↑/↓ 移光标弦
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+            if cmd {
+                edit::change_note_string(&mut self.state, -1);
+            } else {
+                edit::move_cursor(&mut self.state, CursorMove::UpString);
+            }
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+            if cmd {
+                edit::change_note_string(&mut self.state, 1);
+            } else {
+                edit::move_cursor(&mut self.state, CursorMove::DownString);
+            }
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
+            edit::move_cursor(&mut self.state, CursorMove::Left);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
+            edit::move_cursor(&mut self.state, CursorMove::Right);
+        }
+
+        // Insert / I
+        if ctx.input(|i| i.key_pressed(egui::Key::Insert) || (i.key_pressed(egui::Key::I) && !cmd))
+        {
+            edit::insert_note(&mut self.state);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
+            edit::delete_note(&mut self.state);
+        }
+
+        // 附点：Period
+        if ctx.input(|i| i.key_pressed(egui::Key::Period)) {
+            edit::toggle_dotted(&mut self.state);
+        }
+
+        // 时值 Q/W/E/R
+        if ctx.input(|i| i.key_pressed(egui::Key::Q) && !cmd) {
+            edit::set_duration(&mut self.state, NoteValue::Whole);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::W) && !cmd) {
+            edit::set_duration(&mut self.state, NoteValue::Half);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::E) && !cmd) {
+            edit::set_duration(&mut self.state, NoteValue::Quarter);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::R) && !cmd) {
+            edit::set_duration(&mut self.state, NoteValue::Eighth);
+        }
+
+        // 效果
+        if ctx.input(|i| i.key_pressed(egui::Key::H) && !cmd) {
+            edit::toggle_hammer_on(&mut self.state);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::P) && !cmd) {
+            edit::toggle_pull_off(&mut self.state);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::S) && !cmd && !mods.shift) {
+            edit::toggle_slide_up(&mut self.state);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::S) && !cmd && mods.shift) {
+            edit::toggle_slide_down(&mut self.state);
+        }
+        // T 无 Ctrl：延音（Ctrl+T 已用于调弦）
+        if ctx.input(|i| i.key_pressed(egui::Key::T) && !cmd) {
+            edit::toggle_tie(&mut self.state);
+        }
+
+        // 数字品格
+        for (key, ch) in [
+            (egui::Key::Num0, '0'),
+            (egui::Key::Num1, '1'),
+            (egui::Key::Num2, '2'),
+            (egui::Key::Num3, '3'),
+            (egui::Key::Num4, '4'),
+            (egui::Key::Num5, '5'),
+            (egui::Key::Num6, '6'),
+            (egui::Key::Num7, '7'),
+            (egui::Key::Num8, '8'),
+            (egui::Key::Num9, '9'),
+        ] {
+            if ctx.input(|i| i.key_pressed(key) && !cmd) {
+                if let Some(fret) = self.state.fret_input.push_digit(ch) {
+                    edit::set_fret(&mut self.state, fret);
+                }
+            }
+        }
+    }
 }
 
 impl eframe::App for BassoxideApp {
@@ -156,6 +257,11 @@ impl eframe::App for BassoxideApp {
             if let Some(player) = &self.state.audio_player {
                 player.toggle_play_pause();
             }
+        }
+
+        // 谱面编辑快捷键
+        if !ctx.wants_keyboard_input() && !self.state.tuning_editor_open && !self.state.settings_open {
+            self.handle_edit_keys(ctx);
         }
 
         // 更新可用宽度
