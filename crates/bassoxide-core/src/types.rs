@@ -246,6 +246,37 @@ pub enum InstrumentType {
     Other,
 }
 
+impl InstrumentType {
+    /// 由 GM program（及是否打击乐通道）推导显示用乐器种类，不改写音色号。
+    pub fn from_gm(program: u8, is_percussion: bool) -> Self {
+        if is_percussion {
+            return Self::Drums;
+        }
+        match program {
+            0..=7 => Self::Piano,
+            24 | 25 => Self::AcousticGuitar,
+            26..=31 => Self::ElectricGuitar,
+            32..=39 => Self::Bass,
+            40..=51 => Self::Strings,
+            52..=54 => Self::Voice,
+            _ => Self::Other,
+        }
+    }
+}
+
+#[cfg(test)]
+mod instrument_type_tests {
+    use super::InstrumentType;
+
+    #[test]
+    fn from_gm_maps_program_without_name() {
+        assert_eq!(InstrumentType::from_gm(30, false), InstrumentType::ElectricGuitar);
+        assert_eq!(InstrumentType::from_gm(33, false), InstrumentType::Bass);
+        assert_eq!(InstrumentType::from_gm(0, true), InstrumentType::Drums);
+        assert_eq!(InstrumentType::from_gm(0, false), InstrumentType::Piano);
+    }
+}
+
 /// 反复 / 排练标记方向
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RepeatType {
