@@ -6,6 +6,9 @@ use bassoxide_render::Theme;
 /// Material You 种子色
 pub const SEED: Color32 = Color32::from_rgb(0x73, 0xA1, 0x87);
 
+/// 纸张纯白（谱面与主内容区背景）
+pub const PAPER_WHITE: Color32 = Color32::WHITE;
+
 /// 由种子色派生的 MD3 风格色板
 #[derive(Debug, Clone, Copy)]
 pub struct MaterialPalette {
@@ -38,9 +41,10 @@ impl MaterialPalette {
             secondary: Color32::from_rgb(0x4F, 0x63, 0x57),
             on_secondary: Color32::from_rgb(0xFF, 0xFF, 0xFF),
             secondary_container: Color32::from_rgb(0xD1, 0xE8, 0xD9),
-            surface: Color32::from_rgb(0xF7, 0xFA, 0xF7),
-            surface_container: Color32::from_rgb(0xEB, 0xF2, 0xEC),
-            surface_container_high: Color32::from_rgb(0xE0, 0xEA, 0xE2),
+            // Material You surface（浅绿灰），衬托纯白纸张
+            surface: Color32::from_rgb(0xF0, 0xF5, 0xF1),
+            surface_container: Color32::from_rgb(0xE4, 0xED, 0xE6),
+            surface_container_high: Color32::from_rgb(0xD8, 0xE5, 0xDB),
             on_surface: Color32::from_rgb(0x1A, 0x1C, 0x1A),
             on_surface_variant: Color32::from_rgb(0x40, 0x4A, 0x43),
             outline: Color32::from_rgb(0x70, 0x7A, 0x72),
@@ -176,7 +180,8 @@ impl MaterialPalette {
                     90,
                 ),
                 marker_color: Color32::from_rgb(0xC4, 0x7A, 0x20),
-                background: Color32::from_rgb(0xFA, 0xFC, 0xFA),
+                // 谱面元素擦除底与纸张一致：纯白
+                background: PAPER_WHITE,
                 clef_color: self.on_surface_variant,
                 time_sig_color: self.on_surface,
             }

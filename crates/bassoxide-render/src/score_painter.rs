@@ -250,20 +250,26 @@ impl<'a> ScorePainter<'a> {
 
     /// 绘制 A4 白色页面（含淡阴影）
     fn draw_pages(&self, painter: &Painter, layout: &LayoutResult, offset: egui::Vec2) {
-        let paper = Color32::from_gray(252);
-        let border = Color32::from_gray(170);
-        let shadow = Color32::from_black_alpha(40);
+        // 纸张纯白；淡边框区分页面边界
+        let paper = Color32::WHITE;
+        let border = Color32::from_rgb(0xC0, 0xC9, 0xC1);
+        let shadow = Color32::from_black_alpha(28);
 
         for page in &layout.pages {
             let min = Pos2::new(page.x + offset.x, page.y + offset.y);
             let rect = Rect::from_min_size(min, Vec2::new(page.width, page.height));
 
             // 阴影
-            let shadow_rect = rect.translate(Vec2::new(4.0, 5.0));
+            let shadow_rect = rect.translate(Vec2::new(3.0, 4.0));
             painter.rect_filled(shadow_rect, 2.0, shadow);
             // 纸张
             painter.rect_filled(rect, 2.0, paper);
-            painter.rect_stroke(rect, 2.0, Stroke::new(1.0_f32, border), egui::StrokeKind::Inside);
+            painter.rect_stroke(
+                rect,
+                2.0,
+                Stroke::new(1.0_f32, border),
+                egui::StrokeKind::Inside,
+            );
         }
     }
 }

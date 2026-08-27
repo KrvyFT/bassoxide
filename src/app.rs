@@ -178,12 +178,12 @@ impl eframe::App for BassoxideApp {
                 crate::ui::timeline::timeline_panel(ui, &mut self.state);
             });
 
-        // 主内容区
+        // 主内容区：Material You surface 衬底
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::central_panel(&ctx.style())
                     .fill(palette.surface)
-                    .inner_margin(egui::Margin::same(8)),
+                    .inner_margin(egui::Margin::ZERO),
             )
             .show(ctx, |ui| {
                 crate::ui::score_view::score_view(ui, &mut self.state);
