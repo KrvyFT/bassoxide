@@ -221,7 +221,7 @@ pub fn audio_track_panel(ui: &mut Ui, state: &mut AppState) {
 
     let to_x = |score_t: f64| -> f32 { rect.left() + ((score_t - view0) as f32) * pps };
 
-    painter.rect_filled(rect, 8.0, palette.surface_container_high);
+    painter.rect_filled(rect, 0.0, palette.surface_container_high);
 
     let ruler_rect = Rect::from_min_max(
         Pos2::new(rect.left(), rect.top()),
@@ -251,7 +251,7 @@ pub fn audio_track_panel(ui: &mut Ui, state: &mut AppState) {
         palette.on_surface_variant,
     );
 
-    painter.rect_filled(wave_rect, 6.0, palette.surface);
+    painter.rect_filled(wave_rect, 0.0, palette.surface);
     draw_waveform_peaks(
         &painter,
         wave_rect,

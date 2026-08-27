@@ -196,42 +196,22 @@ impl eframe::App for BassoxideApp {
                 transport::transport_bar(ui, &mut self.state);
             });
 
-        // 底部：轨道面板
-        egui::TopBottomPanel::bottom("mixer_bottom")
+        // 底部整体：音频同步轨 + 轨道面板（无圆角、同一表面）
+        egui::TopBottomPanel::bottom("bottom_dock")
             .resizable(true)
-            .default_height(160.0)
-            .frame(
-                egui::Frame::side_top_panel(&ctx.style())
-                    .fill(palette.surface_container)
-                    .inner_margin(egui::Margin::symmetric(12, 10))
-                    .corner_radius(egui::CornerRadius {
-                        nw: 16,
-                        ne: 16,
-                        sw: 0,
-                        se: 0,
-                    }),
-            )
-            .show(ctx, |ui| {
-                crate::ui::timeline::timeline_panel(ui, &mut self.state);
-            });
-
-        // 音频同步轨（叠在轨道面板上方）
-        egui::TopBottomPanel::bottom("audio_sync")
-            .resizable(true)
-            .default_height(150.0)
+            .default_height(300.0)
             .frame(
                 egui::Frame::side_top_panel(&ctx.style())
                     .fill(palette.surface_container)
                     .inner_margin(egui::Margin::symmetric(12, 8))
-                    .corner_radius(egui::CornerRadius {
-                        nw: 12,
-                        ne: 12,
-                        sw: 0,
-                        se: 0,
-                    }),
+                    .corner_radius(egui::CornerRadius::ZERO),
             )
             .show(ctx, |ui| {
                 crate::ui::audio_track::audio_track_panel(ui, &mut self.state);
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(4.0);
+                crate::ui::timeline::timeline_panel(ui, &mut self.state);
             });
 
         // 播放中持续刷新 UI（播放头）

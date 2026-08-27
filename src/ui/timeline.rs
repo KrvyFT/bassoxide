@@ -68,7 +68,7 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
     let full_w = ui.available_width();
     egui::Frame::new()
         .fill(palette.surface_container_high)
-        .corner_radius(egui::CornerRadius::same(12))
+        .corner_radius(egui::CornerRadius::ZERO)
         .inner_margin(egui::Margin::symmetric(8, 6))
         .show(ui, |ui| {
             ui.set_min_width(full_w - 4.0);
@@ -89,7 +89,7 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
                                 } else {
                                     palette.surface_container
                                 })
-                                .corner_radius(egui::CornerRadius::same(8))
+                                .corner_radius(egui::CornerRadius::ZERO)
                                 .inner_margin(egui::Margin::symmetric(8, 4))
                                 .show(ui, |ui| {
                                     ui.set_min_width(row_w - 4.0);
@@ -124,7 +124,7 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
                                         }
                                     });
                                 });
-                            ui.add_space(4.0);
+                            ui.add_space(2.0);
                         }
                     } else {
                         ui.label(
