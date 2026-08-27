@@ -36,7 +36,10 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
     
     // 我们必须检查 audio_engine 并在修改后通知它重新加载
     let mut needs_reload = false;
-    
+    // 待切换的显示轨道（避免与 song 的可变借用冲突，循环后再应用）
+    let mut select_change: Option<usize> = None;
+    let current_selected = state.selected_track;
+
     let presets = state
         .audio_engine
         .as_ref()
@@ -47,7 +50,15 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
         if let Some(song) = &mut state.song {
             for (i, track) in song.tracks.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
-                    ui.label(format!("Trk {}: {}", i + 1, track.name));
+                    // 点击轨道名可切换为“单轨道显示”的当前轨道
+                    let label = format!("Trk {}: {}", i + 1, track.name);
+                    if ui
+                        .selectable_label(i == current_selected, label)
+                        .on_hover_text("点击仅显示该轨道")
+                        .clicked()
+                    {
+                        select_change = Some(i);
+                    }
                     
                     // Solo Button
                     let solo_text = if track.is_solo { "S (On)" } else { "S" };
@@ -101,6 +112,10 @@ pub fn timeline_panel(ui: &mut egui::Ui, state: &mut AppState) {
             }
         }
     });
+
+    if let Some(idx) = select_change {
+        state.select_track(idx);
+    }
 
     if needs_reload {
         if let Some(audio) = &state.audio_engine {

@@ -5,6 +5,7 @@
 
 pub mod engine;
 pub mod measure_layout;
+pub mod page;
 pub mod spacing;
 pub mod staff;
 pub mod system;
