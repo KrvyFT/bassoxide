@@ -6,7 +6,7 @@ use bassoxide_core::note::Note;
 use bassoxide_core::song::{Song, SongInfo};
 use bassoxide_core::track::{Track, Tuning};
 use bassoxide_core::types::{Duration, NoteValue, TimeSignature};
-use roxmltree::Document;
+use roxmltree::{Document, Node};
 use std::collections::HashMap;
 use std::io::Read;
 
@@ -257,7 +257,9 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
 
     // 首先从 XML 的 <Tracks> 中解析各个轨道的属性
     let mut tracks_attr_map = HashMap::new();
-    if let Some(tracks_node) = doc.descendants().find(|n| n.has_tag_name("Tracks")) {
+    if let Some(tracks_node) = doc.descendants().find(|n| {
+        n.has_tag_name("Tracks") && n.children().any(|c| c.has_tag_name("Track"))
+    }) {
         for track_node in tracks_node.children().filter(|n| n.has_tag_name("Track")) {
             if let Some(id) = track_node.attribute("id") {
                 tracks_attr_map.insert(id.to_string(), track_node);
@@ -302,6 +304,8 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
                     };
                 }
             }
+
+            apply_gp7_track_sound(*track_node, &mut track);
         }
         track_objects.push(track);
     }
@@ -449,4 +453,64 @@ fn parse_score_gpif(xml: &str) -> Result<Song> {
     song.tracks = track_objects;
 
     Ok(song)
+}
+
+fn xml_child_u8(node: Node<'_, '_>, tag: &str) -> Option<u8> {
+    node.children()
+        .find(|n| n.has_tag_name(tag))
+        .and_then(|n| n.text())
+        .and_then(|t| t.trim().parse().ok())
+}
+
+/// 从 Track 的 Sounds/Sound/MIDI 与 MidiConnection 写入 GM program / bank / channel。
+fn apply_gp7_track_sound(track_node: Node<'_, '_>, track: &mut Track) {
+    if let Some(sounds) = track_node.children().find(|n| n.has_tag_name("Sounds")) {
+        if let Some(sound) = sounds.children().find(|n| n.has_tag_name("Sound")) {
+            if let Some(midi) = sound.children().find(|n| n.has_tag_name("MIDI")) {
+                if let Some(program) = xml_child_u8(midi, "Program") {
+                    track.midi_program = program;
+                }
+                if let Some(msb) = xml_child_u8(midi, "MSB") {
+                    track.midi_bank = msb;
+                }
+            }
+        }
+    }
+
+    if let Some(conn) = track_node.children().find(|n| n.has_tag_name("MidiConnection")) {
+        if let Some(port) = xml_child_u8(conn, "Port") {
+            track.midi_port = port;
+        }
+        if let Some(ch) = xml_child_u8(conn, "PrimaryChannel") {
+            track.midi_channel = ch;
+            if ch == 9 {
+                track.is_percussion = true;
+            }
+        }
+    }
+
+    track.sync_instrument_type();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_gpif_midi_programs_from_file() {
+        let xml_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../scratch/score.gpif");
+        let Ok(xml) = std::fs::read_to_string(xml_path) else {
+            return;
+        };
+        let song = parse_score_gpif(&xml).expect("Failed to parse GPIF");
+        assert!(!song.tracks.is_empty());
+        if song.tracks.len() >= 3 {
+            assert_eq!(song.tracks[0].midi_program, 30, "Lead Guitar 应为 Distortion Guitar");
+            assert_eq!(song.tracks[2].midi_program, 33, "贝斯轨应使用文件内 GM 33");
+        }
+        if let Some(drums) = song.tracks.iter().find(|t| t.is_percussion) {
+            assert_eq!(drums.midi_program, 0);
+            assert_eq!(drums.midi_channel, 9);
+        }
+    }
 }
