@@ -44,7 +44,23 @@ impl Default for MidiChannel {
 impl MidiChannel {
     /// MIDI 通道 10 (index 9) 是鼓轨道
     pub fn is_percussion(&self) -> bool {
-        self.channel == 9
+        self.channel % 16 == PERCUSSION_CHANNEL
+    }
+
+    /// GP 64 槽通道表下标：4 个端口 × 16 通道。
+    ///
+    /// `port` 在 GP 文件中通常为 1-based；`channel` 为 0-based（已减 1）。
+    /// 若 `channel` 已是 16–63 的表下标，则直接使用。
+    pub fn table_index(port: u8, channel: u8) -> usize {
+        let ch = usize::from(channel);
+        if ch >= MIDI_CHANNEL_COUNT {
+            MIDI_CHANNEL_COUNT - 1
+        } else if ch >= 16 {
+            ch
+        } else {
+            let port_idx = usize::from(port.saturating_sub(1)).min(3);
+            port_idx * 16 + ch
+        }
     }
 }
 

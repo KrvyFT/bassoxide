@@ -117,10 +117,48 @@ impl Song {
         self.tracks.get(index)
     }
 
-    /// 根据轨道名称自动配置所有轨道的乐器类型和音色
-    pub fn auto_configure_instruments(&mut self) {
+    /// 打开文件后：用文件内 MIDI 通道表（若有）分配 GM 音色；否则只同步乐器种类。
+    pub fn apply_file_instruments(&mut self) {
+        let channels = self.midi_channels.clone();
         for track in &mut self.tracks {
-            track.auto_configure_instrument();
+            if !channels.is_empty() {
+                let idx = crate::midi::MidiChannel::table_index(track.midi_port, track.midi_channel);
+                if let Some(ch) = channels.get(idx) {
+                    track.apply_midi_channel(ch);
+                    continue;
+                }
+            }
+            track.sync_instrument_type();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::midi::MidiChannel;
+    use crate::track::Track;
+    use crate::types::InstrumentType;
+
+    #[test]
+    fn apply_file_instruments_uses_channel_table_not_track_name() {
+        let mut song = Song::default();
+        song.midi_channels = vec![MidiChannel {
+            channel: 0,
+            instrument: 30,
+            volume: 96,
+            ..MidiChannel::default()
+        }];
+        song.tracks.push(Track {
+            name: "Bass".to_string(),
+            midi_port: 1,
+            midi_channel: 0,
+            midi_program: 25,
+            ..Track::default()
+        });
+        song.apply_file_instruments();
+        assert_eq!(song.tracks[0].midi_program, 30);
+        assert_eq!(song.tracks[0].instrument_type, InstrumentType::ElectricGuitar);
+        assert_eq!(song.tracks[0].volume, 96);
     }
 }

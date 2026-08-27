@@ -151,9 +151,7 @@ impl AudioEngine {
             if !has_solo && track.is_muted {
                 continue;
             }
-            // 为避免多轨道共用同一 channel 导致音色互相覆盖，
-            // 这里我们为每个 track 分配一个独立的通道 (最多16个)
-            let channel = (track_idx % 16) as i32;
+            let channel = Self::synth_channel(track, track_idx);
             
             // 为该轨道压入初始音色切换事件（包含 Bank 和 Program）
             events.push(MidiEvent::BankSelect {
@@ -208,6 +206,18 @@ impl AudioEngine {
         
         events.sort_by_key(|e| e.tick());
         events
+    }
+
+    fn synth_channel(track: &bassoxide_core::track::Track, track_idx: usize) -> i32 {
+        if track.is_percussion {
+            return i32::from(bassoxide_core::midi::PERCUSSION_CHANNEL);
+        }
+        // 每条旋律轨独立通道，避开 GM 鼓通道 9；音色号仍来自文件。
+        let mut ch = (track_idx as i32) % 15;
+        if ch >= i32::from(bassoxide_core::midi::PERCUSSION_CHANNEL) {
+            ch += 1;
+        }
+        ch
     }
     
     /// 启动后台 sequencer 线程

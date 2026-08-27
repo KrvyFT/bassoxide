@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::measure::Measure;
+use crate::midi::MidiChannel;
 use crate::types::{Clef, Color, InstrumentType, MidiNote};
 
 /// 吉他弦的调弦信息
@@ -141,41 +142,61 @@ impl Track {
         self.tuning.string_count()
     }
 
-    /// 根据轨道名称自动配置 MIDI 音色与乐器类型
-    pub fn auto_configure_instrument(&mut self) {
-        let name_lower = self.name.to_lowercase();
-        
-        if name_lower.contains("drum") || name_lower.contains("鼓") || name_lower.contains("percussion") {
+    /// 用 GP MIDI 通道表条目回填 GM 音色，不根据轨道名猜测。
+    pub fn apply_midi_channel(&mut self, channel: &MidiChannel) {
+        self.midi_channel = channel.channel % 16;
+        self.midi_program = channel.instrument;
+        self.volume = channel.volume;
+        self.pan = channel.balance;
+        if channel.is_percussion() {
             self.is_percussion = true;
-            self.midi_program = 0; 
-            self.instrument_type = InstrumentType::Drums;
-        } else if name_lower.contains("distort") {
-            self.midi_program = 30; // Distortion Guitar
-            self.instrument_type = InstrumentType::ElectricGuitar;
-        } else if name_lower.contains("overdrive") {
-            self.midi_program = 29; // Overdriven Guitar
-            self.instrument_type = InstrumentType::ElectricGuitar;
-        } else if name_lower.contains("clean") {
-            self.midi_program = 27; // Clean Guitar
-            self.instrument_type = InstrumentType::ElectricGuitar;
-        } else if name_lower.contains("jazz guitar") {
-            self.midi_program = 26; // Jazz Guitar
-            self.instrument_type = InstrumentType::ElectricGuitar;
-        } else if name_lower.contains("slap bass") {
-            self.midi_program = 36; // Slap Bass 1
-            self.instrument_type = InstrumentType::Bass;
-        } else if name_lower.contains("synth bass") {
-            self.midi_program = 38; // Synth Bass 1
-            self.instrument_type = InstrumentType::Bass;
-        } else if name_lower.contains("bass") || name_lower.contains("贝斯") || name_lower.contains("低音吉他") {
-            self.midi_program = 33; // Electric Bass (finger)
-            self.instrument_type = InstrumentType::Bass;
-        } else if name_lower.contains("guitar") || name_lower.contains("吉他") {
-            self.midi_program = 27; // Clean Guitar
-            self.instrument_type = InstrumentType::AcousticGuitar;
-        } else if name_lower.contains("piano") || name_lower.contains("钢琴") {
-            self.midi_program = 0; // Acoustic Grand Piano
-            self.instrument_type = InstrumentType::Piano;
         }
+        self.sync_instrument_type();
+    }
+
+    /// 按当前 GM program / 打击乐标志同步 `instrument_type`，不改音色号。
+    pub fn sync_instrument_type(&mut self) {
+        self.instrument_type = InstrumentType::from_gm(self.midi_program, self.is_percussion);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::midi::MidiChannel;
+
+    #[test]
+    fn apply_midi_channel_keeps_file_program() {
+        let mut track = Track {
+            name: "Bass".to_string(),
+            midi_program: 25,
+            ..Track::default()
+        };
+        let ch = MidiChannel {
+            channel: 2,
+            instrument: 27,
+            volume: 110,
+            balance: 40,
+            ..MidiChannel::default()
+        };
+        track.apply_midi_channel(&ch);
+        assert_eq!(track.midi_program, 27, "不得按轨道名改写成 Fingered Bass");
+        assert_eq!(track.midi_channel, 2);
+        assert_eq!(track.volume, 110);
+        assert_eq!(track.instrument_type, InstrumentType::ElectricGuitar);
+    }
+
+    #[test]
+    fn percussion_channel_marks_drums() {
+        let mut track = Track::default();
+        let ch = MidiChannel {
+            channel: 9,
+            instrument: 0,
+            ..MidiChannel::default()
+        };
+        track.apply_midi_channel(&ch);
+        assert!(track.is_percussion);
+        assert_eq!(track.instrument_type, InstrumentType::Drums);
+        assert_eq!(track.midi_program, 0);
     }
 }

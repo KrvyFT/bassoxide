@@ -34,7 +34,7 @@ pub fn load_file(data: &[u8]) -> Result<Song> {
         Err(IoError::UnsupportedFormat("无法识别的文件格式".to_string()))
     }?;
 
-    song.auto_configure_instruments();
+    song.apply_file_instruments();
     Ok(song)
 }
 

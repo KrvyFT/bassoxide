@@ -195,7 +195,12 @@ fn read_tempo(r: &mut GpReader) -> Result<u16> {
 fn read_midi_channels(r: &mut GpReader) -> Result<Vec<MidiChannel>> {
     let mut channels = Vec::with_capacity(64);
     for i in 0..64 {
-        let instrument = r.read_i32()? as u8;
+        let instrument_raw = r.read_i32()?;
+        let instrument = if (0..=127).contains(&instrument_raw) {
+            instrument_raw as u8
+        } else {
+            0
+        };
         let volume = r.read_u8()?;
         let balance = r.read_u8()?;
         let chorus = r.read_u8()?;
