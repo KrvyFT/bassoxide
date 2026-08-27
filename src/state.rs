@@ -119,17 +119,17 @@ impl Default for AppState {
 }
 
 impl AppState {
-    /// 将谱面偏好 × 纸张缩放 × 视图缩放 写入 layout_settings 并标记重排
+    /// 将谱面偏好 × 纸张缩放 × 视图缩放 写入 layout_settings，
+    /// 并按「音符∈谱表 > 谱表∈纸张」自动调节冲突项。
     pub fn apply_score_prefs(&mut self) {
         let z = self.zoom_factor;
-        let p = &self.score_prefs;
-        let paper = p.paper_size;
+        let paper = self.score_prefs.paper_size;
         let (page_w, page_h) = paper.size_px();
-        // 相对 A4：小节/音符/符杆随纸张变大变小
         let paper_s = paper.content_scale();
         let s = paper_s * z;
         let base = LayoutSettings::default();
 
+        let p = &self.score_prefs;
         self.layout_settings.paper_size = paper;
         self.layout_settings.content_scale = paper_s;
         self.layout_settings.page_width = page_w * z;
@@ -141,7 +141,6 @@ impl AppState {
         self.layout_settings.staff_line_spacing = (p.line_spacing * s).max(5.0);
         self.layout_settings.system_gap = (p.row_spacing * s).max(24.0);
         self.layout_settings.measures_per_line = p.measures_per_line;
-        // 符杆区域随字体、纸张与每行小节密度同步缩放
         let pack = if p.measures_per_line > 0 {
             (2.6 / f32::from(p.measures_per_line)).clamp(0.45, 1.0)
         } else {
@@ -158,7 +157,39 @@ impl AppState {
         self.layout_settings.clef_width = (base.clef_width * s).max(16.0);
         self.layout_settings.time_sig_width = (base.time_sig_width * s).max(16.0);
 
+        let fit_ctx = self.staff_fit_context();
+        let fit = bassoxide_layout::resolve_fit(&mut self.layout_settings, fit_ctx);
+
+        // 仅在自动调节后回写偏好，避免无意义浮点漂移
+        if fit.adjusted && s > 0.0 {
+            self.score_prefs.font_size =
+                (self.layout_settings.tab_font_size / s).clamp(8.0, 28.0);
+            self.score_prefs.line_spacing =
+                (self.layout_settings.tab_string_spacing / s).clamp(8.0, 28.0);
+            self.score_prefs.row_spacing =
+                (self.layout_settings.system_gap / s).clamp(16.0, 200.0);
+            if let Some(msg) = fit.summary() {
+                self.status_message = format!("自动适配: {msg}");
+            }
+        }
+
         self.needs_relayout = true;
+    }
+
+    /// 当前选中轨道的谱表形态（约束求解用）
+    fn staff_fit_context(&self) -> bassoxide_layout::StaffFitContext {
+        let Some(song) = &self.song else {
+            return bassoxide_layout::StaffFitContext::default();
+        };
+        let idx = self.selected_track.min(song.tracks.len().saturating_sub(1));
+        let Some(track) = song.tracks.get(idx) else {
+            return bassoxide_layout::StaffFitContext::default();
+        };
+        bassoxide_layout::StaffFitContext {
+            show_standard: track.staff_display.show_standard,
+            show_tab: track.staff_display.show_tab,
+            tab_strings: track.staff_display.tab_strings.max(1),
+        }
     }
 
     pub fn update_zoom(&mut self) {

@@ -74,14 +74,34 @@ impl Default for LayoutSettings {
 }
 
 impl LayoutSettings {
-    /// 六线谱总高度
+    /// 六线谱弦线区域高度（不含音符内边距）
     pub fn tab_staff_height(&self, string_count: usize) -> f32 {
         self.tab_string_spacing * (string_count.saturating_sub(1)) as f32
+    }
+
+    /// 音符在谱表上下各侧预留（保证字号不画出谱表带）
+    pub fn note_pad(&self) -> f32 {
+        (self.tab_font_size * 0.55).clamp(4.0, 18.0)
+    }
+
+    /// 五线谱加线预留
+    pub fn ledger_pad(&self) -> f32 {
+        (self.staff_line_spacing * 2.2).clamp(8.0, 36.0)
+    }
+
+    /// Tab 谱表总绘制高度 = 弦线区 + 上下音符垫
+    pub fn tab_band_height(&self, string_count: usize) -> f32 {
+        self.tab_staff_height(string_count) + self.note_pad() * 2.0
     }
 
     /// 五线谱总高度（5 线 = 4 个间距）
     pub fn standard_staff_height(&self) -> f32 {
         self.staff_line_spacing * 4.0
+    }
+
+    /// 五线谱绘制带高度（含加线垫）
+    pub fn standard_band_height(&self) -> f32 {
+        self.standard_staff_height() + self.ledger_pad() * 2.0
     }
 
     /// 页面可用内容宽度

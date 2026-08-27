@@ -65,8 +65,10 @@ pub fn draw_measure_rhythm(
     }
 
     let dens = stem_fit_scale(beats, measure_width, settings);
+    // 符杆不得超过预留 rhythm_height（谱表∈纸张已计入该高度）
+    let max_stem = (settings.rhythm_height - 2.0).max(5.0);
     let stem_len = ((settings.rhythm_height * 0.48).max(settings.tab_font_size * 0.65) * dens)
-        .clamp(5.0, settings.rhythm_height.max(8.0));
+        .clamp(5.0, max_stem);
     let stem_top = baseline_y;
     let stem_bottom = baseline_y + stem_len;
     let stem_stroke = Stroke::new(

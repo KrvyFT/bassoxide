@@ -234,7 +234,8 @@ impl LayoutEngine {
     fn build_track_staves(&self, song: &Song, selected: usize) -> (Vec<StaffLayout>, f32) {
         let s = &self.settings;
         let mut staves = Vec::new();
-        let mut staff_y = 0.0;
+        let mut y = 0.0f32;
+        let mut total = 0.0f32;
 
         let track = match song.tracks.get(selected) {
             Some(t) => t,
@@ -245,48 +246,48 @@ impl LayoutEngine {
         let mut any = false;
 
         if display.show_standard {
-            let standard_height = s.standard_staff_height();
+            let band = s.standard_band_height();
             staves.push(StaffLayout {
                 staff_type: StaffType::Standard,
                 track_index: selected,
                 string_count: 5,
-                y: staff_y,
-                height: standard_height,
+                y,
+                height: band,
             });
-            staff_y += standard_height + s.track_gap;
+            total = y + band;
+            y = total + s.track_gap;
             any = true;
         }
 
         if display.show_tab {
             let string_count = display.tab_strings.max(1) as usize;
-            let tab_height = s.tab_staff_height(string_count);
+            let band = s.tab_band_height(string_count);
             staves.push(StaffLayout {
                 staff_type: StaffType::Tablature,
                 track_index: selected,
                 string_count,
-                y: staff_y,
-                height: tab_height,
+                y,
+                height: band,
             });
-            // Tab 下方预留符杆(节奏)区域
-            staff_y += tab_height + s.rhythm_height + 8.0;
+            // Tab 下方预留符杆(节奏)区域 —— 计入 system 高度，保证谱表∈纸张
+            total = y + band + s.rhythm_height + 8.0;
             any = true;
         }
 
         // 兜底：至少显示五线谱，避免空白
         if !any {
-            let standard_height = s.standard_staff_height();
+            let band = s.standard_band_height();
             staves.push(StaffLayout {
                 staff_type: StaffType::Standard,
                 track_index: selected,
                 string_count: 5,
-                y: staff_y,
-                height: standard_height,
+                y: 0.0,
+                height: band,
             });
-            staff_y += standard_height + s.track_gap;
+            total = band;
         }
 
-        let total_height = (staff_y - s.track_gap + 10.0).max(0.0);
-        (staves, total_height)
+        (staves, total.max(24.0))
     }
 
     /// 布局单行 System

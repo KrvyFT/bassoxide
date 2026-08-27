@@ -80,6 +80,13 @@ fn score_settings_form(
 ) {
     let prefs = &mut state.score_prefs;
 
+    ui.label(
+        egui::RichText::new("约束优先级：① 音符必须在谱表内  ② 谱表必须在纸张内；冲突时自动调节其它参数")
+            .size(11.0)
+            .color(palette.on_surface_variant),
+    );
+    ui.add_space(8.0);
+
     ui.label(egui::RichText::new("纸张大小").color(palette.on_surface));
     ui.horizontal_wrapped(|ui| {
         for size in bassoxide_layout::PaperSize::ALL {

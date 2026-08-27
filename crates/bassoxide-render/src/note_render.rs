@@ -8,17 +8,20 @@ use bassoxide_layout::tablature;
 
 use crate::colors::Theme;
 
-/// 在六线谱上绘制单个音符（品格数字）
+/// 在六线谱上绘制单个音符（品格数字）。
+/// 音符 Y 夹在谱表带内（含 note_pad）。
 pub fn draw_tab_note(
     painter: &Painter,
     note: &Note,
     x: f32,
     staff_y: f32,
+    string_count: usize,
     settings: &LayoutSettings,
     theme: &Theme,
     is_selected: bool,
 ) {
-    let string_y = staff_y + tablature::string_y_offset(note.string, settings);
+    let string_y =
+        staff_y + tablature::string_y_offset(note.string, string_count, settings);
     let text = tablature::fret_display(note.fret);
 
     let font = egui::FontId::new(settings.tab_font_size, egui::FontFamily::Monospace);
@@ -96,29 +99,45 @@ pub fn draw_standard_note(
     // 2. 计算五线谱相对高度
     let display_note = midi_note + 12;
     let offset = pitch_to_staff_offset(display_note);
-    
-    // 3. 映射到屏幕坐标
+
+    // 3. 映射到屏幕坐标（谱表带含 ledger_pad，五线位于垫内）
     let line_spacing = settings.staff_line_spacing;
-    
-    // 最底线 (第 1 线) 位于 s = 4
-    let bottom_line_y = staff_y + 4.0 * line_spacing;
-    let note_y = bottom_line_y - offset * line_spacing;
-    
+    let pad = settings.ledger_pad();
+    let band_bottom = staff_y + settings.standard_band_height();
+    let band_top = staff_y;
+
+    // 最底线 (第 1 线) 位于 pad + 4 * spacing
+    let bottom_line_y = staff_y + pad + 4.0 * line_spacing;
+    let mut note_y = bottom_line_y - offset * line_spacing;
+    // 硬约束：符头落在谱表带内
+    note_y = note_y.clamp(band_top + line_spacing * 0.4, band_bottom - line_spacing * 0.4);
+
     // 4. 画符头 (椭圆)
     let radius = egui::Vec2::new(line_spacing * 0.7, line_spacing * 0.5);
-    painter.add(egui::Shape::ellipse_filled(Pos2::new(x, note_y), radius, theme.note_text));
-    
-    // 5. 附加线 (Ledger lines)
+    painter.add(egui::Shape::ellipse_filled(
+        Pos2::new(x, note_y),
+        radius,
+        theme.note_text,
+    ));
+
+    // 5. 附加线 (Ledger lines) — 仅在带内绘制
     if offset < 0.0 || offset > 4.0 {
         let mut ledger_offset = if offset < 0.0 { -1.0 } else { 5.0 };
         let end_ledger = offset.round();
-        
-        while (offset < 0.0 && ledger_offset >= end_ledger) || (offset > 4.0 && ledger_offset <= end_ledger) {
+
+        while (offset < 0.0 && ledger_offset >= end_ledger)
+            || (offset > 4.0 && ledger_offset <= end_ledger)
+        {
             let ledger_y = bottom_line_y - ledger_offset * line_spacing;
-            painter.line_segment(
-                [Pos2::new(x - line_spacing * 0.7, ledger_y), Pos2::new(x + line_spacing * 0.7, ledger_y)],
-                egui::Stroke::new(1.0_f32, theme.note_text),
-            );
+            if ledger_y >= band_top && ledger_y <= band_bottom {
+                painter.line_segment(
+                    [
+                        Pos2::new(x - line_spacing * 0.7, ledger_y),
+                        Pos2::new(x + line_spacing * 0.7, ledger_y),
+                    ],
+                    egui::Stroke::new(1.0_f32, theme.note_text),
+                );
+            }
             if offset < 0.0 {
                 ledger_offset -= 1.0;
             } else {
@@ -126,14 +145,22 @@ pub fn draw_standard_note(
             }
         }
     }
-    
-    // 6. 画符干 (Stem)
-    // 根据在五线谱上的相对位置：通常第三线 (offset = 2.0) 以下符干朝上(画在右侧)，第三线及以上符干朝下(画在左侧)
+
+    // 6. 画符干 — 长度限制在谱表带内
     let is_stem_up = offset < 2.0;
-    let stem_x = if is_stem_up { x + radius.x } else { x - radius.x };
+    let stem_x = if is_stem_up {
+        x + radius.x
+    } else {
+        x - radius.x
+    };
     let stem_dir = if is_stem_up { -1.0 } else { 1.0 };
-    // 符干长度随线距（已含纸张缩放）变化，略压缩以适配较窄小节
-    let stem_length = 3.2 * line_spacing;
+    let ideal = 3.2 * line_spacing;
+    let max_len = if is_stem_up {
+        (note_y - band_top).max(line_spacing)
+    } else {
+        (band_bottom - note_y).max(line_spacing)
+    };
+    let stem_length = ideal.min(max_len);
     let stem_y_end = note_y + stem_dir * stem_length;
     let stem_w = (line_spacing * 0.12).clamp(0.8, 2.0);
 

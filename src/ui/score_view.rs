@@ -1,4 +1,4 @@
-//! 乐谱主视图 — 滚动、缩放、交互。
+//! 乐谱主视图 — 轨道显示器：滚动、缩放、纸张内裁剪。
 
 use egui::{ScrollArea, Sense, Ui};
 use bassoxide_render::ScorePainter;
@@ -6,7 +6,7 @@ use bassoxide_render::ScorePainter;
 use crate::state::AppState;
 use crate::ui::material::MaterialPalette;
 
-/// 绘制乐谱主视图
+/// 绘制乐谱主视图（轨道显示器）
 pub fn score_view(ui: &mut Ui, state: &mut AppState) {
     let palette = MaterialPalette::for_mode(state.is_light_theme);
 
@@ -64,6 +64,7 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                 response.rect.min.y + 24.0,
             );
 
+            // ScorePainter 按页 clip，保证谱表墨迹不越出纸张
             let score_painter = ScorePainter::new(&state.layout_settings, &state.theme);
             score_painter.paint(&painter, song, layout, offset);
         });

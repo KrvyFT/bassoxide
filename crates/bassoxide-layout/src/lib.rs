@@ -3,6 +3,7 @@
 //! 将 `Song` 数据模型转换为可渲染的布局结果 `LayoutResult`。
 //! 计算每个元素在屏幕上的精确坐标。
 
+pub mod constraints;
 pub mod engine;
 pub mod measure_layout;
 pub mod page;
@@ -11,5 +12,6 @@ pub mod staff;
 pub mod system;
 pub mod tablature;
 
+pub use constraints::{resolve_fit, StaffFitContext};
 pub use engine::{LayoutEngine, LayoutResult};
 pub use page::PaperSize;
