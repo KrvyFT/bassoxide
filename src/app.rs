@@ -260,5 +260,8 @@ impl eframe::App for BassoxideApp {
                 self.state.settings_open = false;
             }
         }
+
+        // 六线谱调弦配置
+        crate::ui::toolbar::tuning_editor_window(ctx, &mut self.state);
     }
 }

@@ -1,5 +1,6 @@
 //! 工具栏。
 
+use bassoxide_core::{midi_note_name, Track, Tuning};
 use egui::Ui;
 
 use crate::state::AppState;
@@ -13,7 +14,6 @@ pub fn toolbar(ui: &mut Ui, state: &mut AppState) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
 
-        // 歌曲信息
         let (title, artist, tempo) = match &state.song {
             Some(song) => (
                 song.info.title.clone(),
@@ -38,12 +38,10 @@ pub fn toolbar(ui: &mut Ui, state: &mut AppState) {
         }
         ui.separator();
         ui.label(
-            egui::RichText::new(format!("♩={}", tempo))
-                .color(palette.primary),
+            egui::RichText::new(format!("♩={}", tempo)).color(palette.primary),
         );
         ui.separator();
 
-        // 单轨道显示：轨道切换
         let track_count = state.song.as_ref().map(|s| s.track_count()).unwrap_or(0);
         if track_count > 0 {
             let selected = state.selected_track.min(track_count - 1);
@@ -55,8 +53,7 @@ pub fn toolbar(ui: &mut Ui, state: &mut AppState) {
                 .unwrap_or_default();
 
             ui.label(
-                egui::RichText::new("显示轨道:")
-                    .color(palette.on_surface_variant),
+                egui::RichText::new("显示轨道:").color(palette.on_surface_variant),
             );
             if ui
                 .add(egui::Button::new("◀").fill(palette.secondary_container))
@@ -82,11 +79,7 @@ pub fn toolbar(ui: &mut Ui, state: &mut AppState) {
 
             ui.separator();
 
-            // 纸张大小（小节/符杆随纸张自适应）
-            ui.label(
-                egui::RichText::new("纸张:")
-                    .color(palette.on_surface_variant),
-            );
+            ui.label(egui::RichText::new("纸张:").color(palette.on_surface_variant));
             egui::ComboBox::from_id_salt("toolbar_paper_size")
                 .selected_text(state.score_prefs.paper_size.label())
                 .width(72.0)
@@ -106,11 +99,7 @@ pub fn toolbar(ui: &mut Ui, state: &mut AppState) {
 
             ui.separator();
 
-            // 乐谱种类（作用于当前选中轨道）
-            ui.label(
-                egui::RichText::new("乐谱种类:")
-                    .color(palette.on_surface_variant),
-            );
+            ui.label(egui::RichText::new("乐谱种类:").color(palette.on_surface_variant));
 
             let track_idx = state.selected_track.min(track_count - 1);
             if let Some(song) = state.song.as_mut() {
@@ -125,36 +114,46 @@ pub fn toolbar(ui: &mut Ui, state: &mut AppState) {
                         needs_relayout = true;
                     }
 
-                    let four_on =
-                        track.staff_display.show_tab && track.staff_display.tab_strings == 4;
-                    let mut four = four_on;
+                    let mut tab_on = track.staff_display.show_tab;
                     if ui
-                        .checkbox(&mut four, "四线谱")
-                        .on_hover_text("贝斯 Tab（4 弦）")
+                        .checkbox(&mut tab_on, "六线谱")
+                        .on_hover_text("Tab：可配置弦数与每弦音高")
                         .changed()
                     {
-                        if four {
-                            track.apply_tab_string_count(4);
-                        } else if track.staff_display.tab_strings == 4 {
+                        if tab_on {
+                            track.enable_tab();
+                        } else {
                             track.staff_display.disable_tab();
                         }
                         needs_relayout = true;
                     }
 
-                    let six_on =
-                        track.staff_display.show_tab && track.staff_display.tab_strings == 6;
-                    let mut six = six_on;
-                    if ui
-                        .checkbox(&mut six, "六线谱")
-                        .on_hover_text("吉他 Tab（6 弦）")
-                        .changed()
-                    {
-                        if six {
-                            track.apply_tab_string_count(6);
-                        } else if track.staff_display.tab_strings == 6 {
-                            track.staff_display.disable_tab();
+                    if track.staff_display.show_tab {
+                        let mut n = track.string_count().clamp(1, 8) as u8;
+                        ui.label(
+                            egui::RichText::new("弦数")
+                                .size(11.0)
+                                .color(palette.on_surface_variant),
+                        );
+                        if ui
+                            .add(egui::DragValue::new(&mut n).range(1..=8).speed(0.2))
+                            .on_hover_text("六线谱线条数量（1–8）")
+                            .changed()
+                        {
+                            track.set_string_count(n as usize);
+                            needs_relayout = true;
                         }
-                        needs_relayout = true;
+
+                        if ui
+                            .add(
+                                egui::Button::new("调弦…")
+                                    .corner_radius(egui::CornerRadius::ZERO),
+                            )
+                            .on_hover_text("配置每条线的空弦音高")
+                            .clicked()
+                        {
+                            state.tuning_editor_open = true;
+                        }
                     }
                 }
             }
@@ -164,4 +163,101 @@ pub fn toolbar(ui: &mut Ui, state: &mut AppState) {
     if needs_relayout {
         state.needs_relayout = true;
     }
+}
+
+/// 六线谱调弦配置窗口
+pub fn tuning_editor_window(ctx: &egui::Context, state: &mut AppState) {
+    if !state.tuning_editor_open {
+        return;
+    }
+    let palette = MaterialPalette::for_mode(state.is_light_theme);
+    let track_idx = state.selected_track;
+    let mut open = state.tuning_editor_open;
+    let mut changed = false;
+
+    egui::Window::new("六线谱调弦")
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(true)
+        .default_width(320.0)
+        .show(ctx, |ui| {
+            ui.label(
+                egui::RichText::new("修改弦数或空弦音高后，谱面音符会按原音高自动换到新弦位。")
+                    .size(12.0)
+                    .color(palette.on_surface_variant),
+            );
+            ui.add_space(6.0);
+
+            let Some(song) = state.song.as_mut() else {
+                ui.label("未加载乐谱");
+                return;
+            };
+            let idx = track_idx.min(song.tracks.len().saturating_sub(1));
+            let Some(track) = song.tracks.get_mut(idx) else {
+                return;
+            };
+
+            ui.horizontal(|ui| {
+                ui.label("弦数");
+                let mut n = track.string_count().clamp(1, 8) as u8;
+                if ui
+                    .add(egui::DragValue::new(&mut n).range(1..=8))
+                    .changed()
+                {
+                    track.set_string_count(n as usize);
+                    changed = true;
+                }
+                if ui.button("标准吉他").clicked() {
+                    apply_preset(track, Tuning::standard_guitar());
+                    changed = true;
+                }
+                if ui.button("标准贝斯").clicked() {
+                    apply_preset(track, Tuning::standard_bass());
+                    changed = true;
+                }
+            });
+
+            ui.separator();
+            ui.label(egui::RichText::new("各弦空弦音高（MIDI）").strong());
+
+            let string_count = track.string_count();
+            for i in 0..string_count {
+                let number = (i + 1) as u8;
+                let mut midi = track
+                    .tuning
+                    .strings
+                    .get(i)
+                    .map(|s| s.tuning)
+                    .unwrap_or(40);
+                ui.horizontal(|ui| {
+                    ui.label(format!("弦 {number}"));
+                    if ui
+                        .add(egui::DragValue::new(&mut midi).range(12..=96).speed(0.3))
+                        .changed()
+                    {
+                        track.set_string_open_pitch(number, midi);
+                        changed = true;
+                    }
+                    ui.label(
+                        egui::RichText::new(midi_note_name(midi))
+                            .color(palette.primary)
+                            .strong(),
+                    );
+                });
+            }
+        });
+
+    state.tuning_editor_open = open;
+    if changed {
+        state.needs_relayout = true;
+        state.status_message = "已更新六线谱调弦并重映射音符".into();
+    }
+}
+
+fn apply_preset(track: &mut Track, new_tuning: Tuning) {
+    let old = track.tuning.clone();
+    track.tuning = new_tuning;
+    track.remap_notes_preserving_pitch(&old);
+    track.sync_tab_string_count();
+    track.staff_display.show_tab = true;
 }

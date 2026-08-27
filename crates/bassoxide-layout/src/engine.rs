@@ -260,7 +260,7 @@ impl LayoutEngine {
         }
 
         if display.show_tab {
-            let string_count = display.tab_strings.max(1) as usize;
+            let string_count = track.tuning.string_count().clamp(1, 8);
             let band = s.tab_band_height(string_count);
             staves.push(StaffLayout {
                 staff_type: StaffType::Tablature,
