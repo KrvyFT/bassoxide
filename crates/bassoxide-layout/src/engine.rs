@@ -1,10 +1,13 @@
 //! 排版引擎主入口。
 //!
 //! 将 `Song` 数据转换为 `LayoutResult`，包含所有元素的屏幕坐标。
+//! 当前采用「单轨道 + A4 分页」的排版方式：只显示选中的轨道，
+//! 小节按 A4 页面可用宽度自动换行，多行按 A4 页面高度自动分页。
 
 use bassoxide_core::song::Song;
 
 use crate::measure_layout::{layout_voice_beats, BeatPosition};
+use crate::page::PageLayout;
 use crate::spacing::LayoutSettings;
 use crate::staff::{StaffLayout, StaffType};
 use crate::system::{MeasurePosition, SystemLayout};
@@ -12,6 +15,8 @@ use crate::system::{MeasurePosition, SystemLayout};
 /// 排版引擎
 pub struct LayoutEngine {
     pub settings: LayoutSettings,
+    /// 当前显示的轨道索引
+    pub selected_track: usize,
 }
 
 /// 完整的布局结果
@@ -19,6 +24,12 @@ pub struct LayoutEngine {
 pub struct LayoutResult {
     /// 所有 System 行
     pub systems: Vec<SystemLayout>,
+    /// A4 页面矩形
+    pub pages: Vec<PageLayout>,
+    /// 单页宽度
+    pub page_width: f32,
+    /// 单页高度
+    pub page_height: f32,
     /// 总内容高度
     pub total_height: f32,
     /// 总内容宽度
@@ -30,65 +41,132 @@ pub struct LayoutResult {
 
 impl LayoutEngine {
     pub fn new(settings: LayoutSettings) -> Self {
-        Self { settings }
+        Self {
+            settings,
+            selected_track: 0,
+        }
+    }
+
+    /// 指定显示轨道
+    pub fn with_selected_track(mut self, track: usize) -> Self {
+        self.selected_track = track;
+        self
     }
 
     /// 执行完整排版
     pub fn layout(&self, song: &Song) -> LayoutResult {
+        let empty = LayoutResult {
+            systems: vec![],
+            pages: vec![],
+            page_width: self.settings.page_width,
+            page_height: self.settings.page_height,
+            total_height: 0.0,
+            total_width: self.settings.page_width,
+            beat_positions: vec![],
+        };
+
         if song.tracks.is_empty() || song.master_bars.is_empty() {
-            return LayoutResult {
-                systems: vec![],
-                total_height: 0.0,
-                total_width: self.settings.available_width,
-                beat_positions: vec![],
-            };
+            return empty;
         }
 
-        // 1. 计算每个小节的理想宽度
-        let measure_widths = self.compute_measure_widths(song);
+        let selected = self.selected_track.min(song.tracks.len() - 1);
 
-        // 2. 将小节分配到 System 行（自动换行）
+        // 1. 计算每个小节的理想宽度（仅基于所选轨道）
+        let measure_widths = self.compute_measure_widths(song, selected);
+
+        // 2. 将小节分配到 System 行（按 A4 页宽自动换行）
         let system_ranges = self.break_into_systems(&measure_widths);
 
-        // 3. 为每个 System 计算详细布局
-        let mut systems = Vec::new();
-        let mut y = self.settings.margin_top;
+        // 3. 计算所选轨道的谱表堆叠（每行相同）
+        let (staff_template, system_height) = self.build_track_staves(song, selected);
+
+        // 4. 分页 + 逐行详细布局
+        let page_gap = 30.0;
+        let page_left = 24.0;
+        let line_gap = (self.settings.system_gap * 0.4).max(16.0);
+        let content_top_pad = self.settings.margin_top.min(self.settings.page_margin);
+
+        let mut pages: Vec<PageLayout> = Vec::new();
+        let mut systems: Vec<SystemLayout> = Vec::new();
+
+        // 建立首个页面
+        let mut page_index = 0usize;
+        let mut page_top = page_gap;
+        pages.push(PageLayout {
+            index: page_index,
+            x: page_left,
+            y: page_top,
+            width: self.settings.page_width,
+            height: self.settings.page_height,
+        });
+        let mut y = page_top + self.settings.page_margin + content_top_pad;
 
         for (start, end) in &system_ranges {
-            let system = self.layout_system(song, *start, *end, y, &measure_widths);
-            y += system.height + self.settings.system_gap;
+            let page_content_bottom = page_top + self.settings.page_height - self.settings.page_margin;
+
+            // 当前行放不下 -> 新建页面
+            if y + system_height > page_content_bottom && systems.iter().any(|s| s.page_index == page_index) {
+                page_index += 1;
+                page_top = page_gap + page_index as f32 * (self.settings.page_height + page_gap);
+                pages.push(PageLayout {
+                    index: page_index,
+                    x: page_left,
+                    y: page_top,
+                    width: self.settings.page_width,
+                    height: self.settings.page_height,
+                });
+                y = page_top + self.settings.page_margin + content_top_pad;
+            }
+
+            let content_left = page_left + self.settings.page_margin;
+            let system = self.layout_system(
+                *start,
+                *end,
+                y,
+                content_left,
+                page_index,
+                &measure_widths,
+                &staff_template,
+                system_height,
+            );
+            y += system.height + line_gap;
             systems.push(system);
         }
 
-        // 4. 计算 beat 位置
+        // 5. 计算 beat 位置
         let beat_positions = self.compute_beat_positions(song, &systems);
 
-        let mut max_width = self.settings.available_width;
-        if let Some(sys) = systems.first() {
-            if let Some(last) = sys.measure_positions.last() {
-                max_width = last.x + last.width + self.settings.margin_left;
-            }
-        }
+        let last_page_bottom = pages
+            .last()
+            .map(|p| p.y + p.height)
+            .unwrap_or(self.settings.page_height);
+        let total_width = page_left * 2.0 + self.settings.page_width;
 
         LayoutResult {
             systems,
-            total_height: y,
-            total_width: max_width,
+            pages,
+            page_width: self.settings.page_width,
+            page_height: self.settings.page_height,
+            total_height: last_page_bottom + page_gap,
+            total_width,
             beat_positions,
         }
     }
 
-    /// 计算每个小节的理想宽度（基于内容复杂度）
-    fn compute_measure_widths(&self, song: &Song) -> Vec<f32> {
+    /// 计算每个小节的理想宽度（基于所选轨道的内容复杂度）
+    fn compute_measure_widths(&self, song: &Song, selected: usize) -> Vec<f32> {
         let measure_count = song.measure_count();
         let mut widths = Vec::with_capacity(measure_count);
 
+        let track = song.tracks.get(selected);
+        // 单行内小节最大宽度不超过页面可用宽度（减去前导区）
+        let max_measure_width =
+            (self.settings.page_content_width() - self.settings.clef_width - self.settings.time_sig_width)
+                .max(self.settings.min_measure_width);
+
         for m in 0..measure_count {
-            // 找所有轨道中此小节的最大 beat 数
-            let max_beats = song
-                .tracks
-                .iter()
-                .filter_map(|t| t.measures.get(m))
+            let max_beats = track
+                .and_then(|t| t.measures.get(m))
                 .map(|measure| {
                     measure
                         .voices
@@ -97,46 +175,121 @@ impl LayoutEngine {
                         .max()
                         .unwrap_or(0)
                 })
-                .max()
-                .unwrap_or(1)
+                .unwrap_or(0)
                 .max(1);
 
             let width = (max_beats as f32 * self.settings.min_beat_spacing + 20.0)
-                .max(self.settings.min_measure_width);
+                .max(self.settings.min_measure_width)
+                .min(max_measure_width);
             widths.push(width);
         }
 
         widths
     }
 
-    /// 将小节分配到行（改为单行无尽横向滚动）
+    /// 将小节分配到行：按 A4 页面可用宽度自动换行
     fn break_into_systems(&self, widths: &[f32]) -> Vec<(usize, usize)> {
         if widths.is_empty() {
             return vec![];
         }
-        vec![(0, widths.len())]
+
+        let preamble = self.settings.clef_width + self.settings.time_sig_width;
+        let available = (self.settings.page_content_width() - preamble).max(self.settings.min_measure_width);
+
+        let mut ranges = Vec::new();
+        let mut start = 0usize;
+        let mut acc = 0.0f32;
+
+        for (i, w) in widths.iter().enumerate() {
+            // 若当前行已有内容且再加入会超宽，则换行
+            if i > start && acc + w > available {
+                ranges.push((start, i));
+                start = i;
+                acc = 0.0;
+            }
+            acc += w;
+        }
+        if start < widths.len() {
+            ranges.push((start, widths.len()));
+        }
+
+        ranges
     }
 
-    /// 布局单个 System
+    /// 构建所选轨道的谱表堆叠模板（各行结构相同）
+    fn build_track_staves(&self, song: &Song, selected: usize) -> (Vec<StaffLayout>, f32) {
+        let s = &self.settings;
+        let mut staves = Vec::new();
+        let mut staff_y = 0.0;
+
+        let track = match song.tracks.get(selected) {
+            Some(t) => t,
+            None => return (staves, 0.0),
+        };
+
+        let string_count = track.string_count();
+        let is_guitar_bass =
+            track.midi_program >= 24 && track.midi_program <= 39 && string_count > 0;
+
+        if !is_guitar_bass {
+            let standard_height = 24.0;
+            staves.push(StaffLayout {
+                staff_type: StaffType::Standard,
+                track_index: selected,
+                string_count: 5,
+                y: staff_y,
+                height: standard_height,
+            });
+            staff_y += standard_height + s.track_gap;
+        } else {
+            // 六线谱
+            let tab_height = s.tab_staff_height(string_count);
+            staves.push(StaffLayout {
+                staff_type: StaffType::Tablature,
+                track_index: selected,
+                string_count,
+                y: staff_y,
+                height: tab_height,
+            });
+            // 六线谱下方预留符杆(节奏)区域
+            staff_y += tab_height + s.rhythm_height + 8.0;
+
+            // 简谱
+            let numbered_height = 20.0;
+            staves.push(StaffLayout {
+                staff_type: StaffType::Numbered,
+                track_index: selected,
+                string_count: 1,
+                y: staff_y,
+                height: numbered_height,
+            });
+            staff_y += numbered_height + s.track_gap;
+        }
+
+        let total_height = (staff_y - s.track_gap + 10.0).max(0.0);
+        (staves, total_height)
+    }
+
+    /// 布局单行 System
+    #[allow(clippy::too_many_arguments)]
     fn layout_system(
         &self,
-        song: &Song,
         start: usize,
         end: usize,
         y: f32,
+        content_left: f32,
+        page_index: usize,
         measure_widths: &[f32],
+        staff_template: &[StaffLayout],
+        system_height: f32,
     ) -> SystemLayout {
         let s = &self.settings;
-
-        // 横向滚动模式下，不再按可用屏幕宽度拉伸小节，保持自然宽度 (scale = 1.0)
         let preamble_width = s.clef_width + s.time_sig_width;
-        let scale = 1.0;
 
-        // 小节位置
         let mut measure_positions = Vec::new();
-        let mut x = s.margin_left + preamble_width;
+        let mut x = content_left + preamble_width;
         for m in start..end {
-            let width = measure_widths[m] * scale;
+            let width = measure_widths[m];
             measure_positions.push(MeasurePosition {
                 measure_index: m,
                 x,
@@ -145,57 +298,17 @@ impl LayoutEngine {
             x += width;
         }
 
-        // 各轨道的谱表
-        let mut staves = Vec::new();
-        let mut staff_y = 0.0;
-        for (track_idx, track) in song.tracks.iter().enumerate() {
-            let string_count = track.string_count();
-
-            let is_guitar_bass = track.midi_program >= 24 && track.midi_program <= 39 && string_count > 0;
-
-            if !is_guitar_bass {
-                // 其他乐器：只显示五线谱 (Standard)
-                let standard_height = 24.0;
-                staves.push(StaffLayout {
-                    staff_type: StaffType::Standard,
-                    track_index: track_idx,
-                    string_count: 5,
-                    y: staff_y,
-                    height: standard_height,
-                });
-                staff_y += standard_height + s.track_gap;
-            } else {
-                // 吉他/贝斯：显示指法谱(Tablature) + 数字谱(Numbered)
-                let tab_height = s.tab_staff_height(string_count);
-                staves.push(StaffLayout {
-                    staff_type: StaffType::Tablature,
-                    track_index: track_idx,
-                    string_count,
-                    y: staff_y,
-                    height: tab_height,
-                });
-                staff_y += tab_height + 10.0;
-                
-                let numbered_height = 20.0;
-                staves.push(StaffLayout {
-                    staff_type: StaffType::Numbered,
-                    track_index: track_idx,
-                    string_count: 1, 
-                    y: staff_y,
-                    height: numbered_height,
-                });
-                staff_y += numbered_height + s.track_gap;
-            }
-        }
-
-        let total_height = staff_y - s.track_gap + 10.0; // 减去最后一个 gap
+        let content_width = (x - content_left).max(preamble_width);
 
         SystemLayout {
             start_measure: start,
             end_measure: end,
             y,
-            height: total_height.max(0.0),
-            staves,
+            height: system_height,
+            content_left,
+            content_width,
+            page_index,
+            staves: staff_template.to_vec(),
             measure_positions,
         }
     }
@@ -211,7 +324,6 @@ impl LayoutEngine {
         let mut result = Vec::with_capacity(measure_count);
 
         for m in 0..measure_count {
-            // 查找此小节所在的 system 和宽度
             let measure_width = systems
                 .iter()
                 .flat_map(|sys| &sys.measure_positions)

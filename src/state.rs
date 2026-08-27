@@ -40,6 +40,8 @@ pub struct AppState {
     pub zoom_factor: f32,
     /// 当前 SoundFont
     pub current_sf2: String,
+    /// 当前显示的轨道索引（单轨道显示）
+    pub selected_track: usize,
 }
 
 impl Default for AppState {
@@ -56,7 +58,8 @@ impl Default for AppState {
             song: None,
             layout: None,
             layout_settings: LayoutSettings::default(),
-            theme: Theme::dark(),
+            // A4 白纸显示：使用浅色（纸张）主题，深色墨迹
+            theme: Theme::light(),
             cursor: CursorPosition::default(),
             scroll_y: 0.0,
             needs_relayout: false,
@@ -65,6 +68,7 @@ impl Default for AppState {
             audio_engine,
             zoom_factor: 1.0,
             current_sf2: "Orchestra_HQ.sf2".to_string(),
+            selected_track: 0,
         }
     }
 }
@@ -84,12 +88,26 @@ impl AppState {
         self.layout_settings.tab_font_size = base.tab_font_size * z;
         self.layout_settings.clef_width = base.clef_width * z;
         self.layout_settings.time_sig_width = base.time_sig_width * z;
+        self.layout_settings.page_width = base.page_width * z;
+        self.layout_settings.page_height = base.page_height * z;
+        self.layout_settings.page_margin = base.page_margin * z;
+        self.layout_settings.rhythm_height = base.rhythm_height * z;
     }
+
+    /// 切换显示的轨道
+    pub fn select_track(&mut self, index: usize) {
+        if index != self.selected_track {
+            self.selected_track = index;
+            self.needs_relayout = true;
+        }
+    }
+
     /// 加载乐谱并触发排版
     pub fn load_song(&mut self, song: Song, path: Option<String>) {
         let track_count = song.track_count();
         let measure_count = song.measure_count();
         self.file_path = path;
+        self.selected_track = 0;
         self.status_message = format!(
             "已加载: {} | {} 轨道, {} 小节, {} BPM",
             song.info.title.as_str(),
@@ -106,7 +124,11 @@ impl AppState {
     /// 执行排版（仅在需要时调用）
     pub fn relayout(&mut self) {
         if let Some(song) = &self.song {
-            let engine = LayoutEngine::new(self.layout_settings.clone());
+            let selected = self
+                .selected_track
+                .min(song.track_count().saturating_sub(1));
+            let engine =
+                LayoutEngine::new(self.layout_settings.clone()).with_selected_track(selected);
             self.layout = Some(engine.layout(song));
             self.needs_relayout = false;
         }

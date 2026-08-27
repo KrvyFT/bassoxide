@@ -45,11 +45,11 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                 Sense::hover(),
             );
 
-            // 填充背景
+            // 填充画布背景（深灰，衬托白色 A4 页面）
             painter.rect_filled(
                 response.rect,
                 0.0,
-                state.theme.background,
+                egui::Color32::from_gray(70),
             );
 
             // 绘制乐谱

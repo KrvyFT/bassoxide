@@ -113,7 +113,7 @@ impl eframe::App for BassoxideApp {
 
         // 工具栏
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
-            toolbar::toolbar(ui, &self.state);
+            toolbar::toolbar(ui, &mut self.state);
         });
 
         // 播放控制条

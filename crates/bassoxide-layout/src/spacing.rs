@@ -27,6 +27,14 @@ pub struct LayoutSettings {
     pub clef_width: f32,
     /// 拍号区域宽度 (px)
     pub time_sig_width: f32,
+    /// A4 页面宽度 (px)
+    pub page_width: f32,
+    /// A4 页面高度 (px)
+    pub page_height: f32,
+    /// 页面内边距 (px)
+    pub page_margin: f32,
+    /// 六线谱下方符杆(节奏)区域高度 (px)
+    pub rhythm_height: f32,
 }
 
 impl Default for LayoutSettings {
@@ -44,6 +52,11 @@ impl Default for LayoutSettings {
             tab_font_size: 12.0,
             clef_width: 30.0,
             time_sig_width: 25.0,
+            // A4 纵向 210×297mm，约 96dpi 下 794×1123 px
+            page_width: 794.0,
+            page_height: 1123.0,
+            page_margin: 48.0,
+            rhythm_height: 26.0,
         }
     }
 }
@@ -52,5 +65,15 @@ impl LayoutSettings {
     /// 六线谱总高度 (6弦)
     pub fn tab_staff_height(&self, string_count: usize) -> f32 {
         self.tab_string_spacing * (string_count.saturating_sub(1)) as f32
+    }
+
+    /// A4 页面可用内容宽度
+    pub fn page_content_width(&self) -> f32 {
+        (self.page_width - self.page_margin * 2.0).max(50.0)
+    }
+
+    /// A4 页面可用内容高度
+    pub fn page_content_height(&self) -> f32 {
+        (self.page_height - self.page_margin * 2.0).max(50.0)
     }
 }
