@@ -110,8 +110,98 @@ impl Measure {
         &self.voices[0]
     }
 
+    /// 获取主声部（可变）
+    pub fn primary_voice_mut(&mut self) -> &mut Voice {
+        &mut self.voices[0]
+    }
+
     /// 是否有任何非空声部
     pub fn has_content(&self) -> bool {
         self.voices.iter().any(|v| !v.is_empty())
+    }
+}
+
+/// 小节时值校验结果
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MeasureDurationStatus {
+    /// 与拍号一致
+    Ok,
+    /// 总 ticks 少于拍号
+    Under { expected: u32, actual: u32 },
+    /// 总 ticks 多于拍号
+    Over { expected: u32, actual: u32 },
+}
+
+impl MeasureDurationStatus {
+    pub fn is_ok(self) -> bool {
+        matches!(self, Self::Ok)
+    }
+
+    /// actual - expected（多则为正，少则为负）
+    pub fn delta_ticks(self) -> i32 {
+        match self {
+            Self::Ok => 0,
+            Self::Under { expected, actual } => actual as i32 - expected as i32,
+            Self::Over { expected, actual } => actual as i32 - expected as i32,
+        }
+    }
+}
+
+/// 比较声部总时值与拍号期望 ticks
+pub fn check_voice_duration(voice: &Voice, expected_ticks: u32) -> MeasureDurationStatus {
+    let actual = voice.total_ticks();
+    if actual == expected_ticks {
+        MeasureDurationStatus::Ok
+    } else if actual < expected_ticks {
+        MeasureDurationStatus::Under {
+            expected: expected_ticks,
+            actual,
+        }
+    } else {
+        MeasureDurationStatus::Over {
+            expected: expected_ticks,
+            actual,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::beat::Beat;
+    use crate::types::{Duration, NoteValue, TimeSignature};
+
+    #[test]
+    fn duration_ok_under_over() {
+        let expected = TimeSignature::default().measure_ticks(); // 3840
+        let mut voice = Voice::default();
+        for _ in 0..4 {
+            voice.beats.push(Beat {
+                duration: Duration {
+                    value: NoteValue::Quarter,
+                    ..Duration::default()
+                },
+                ..Beat::default()
+            });
+        }
+        assert_eq!(check_voice_duration(&voice, expected), MeasureDurationStatus::Ok);
+
+        voice.beats.pop();
+        assert!(matches!(
+            check_voice_duration(&voice, expected),
+            MeasureDurationStatus::Under { .. }
+        ));
+
+        voice.beats.push(Beat {
+            duration: Duration {
+                value: NoteValue::Whole,
+                ..Duration::default()
+            },
+            ..Beat::default()
+        });
+        assert!(matches!(
+            check_voice_duration(&voice, expected),
+            MeasureDurationStatus::Over { .. }
+        ));
     }
 }

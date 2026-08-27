@@ -20,6 +20,8 @@ pub mod types;
 // 重新导出常用类型
 pub use song::Song;
 pub use track::{midi_note_name, GuitarString, StaffDisplay, Track, Tuning};
-pub use measure::{Direction, Marker, MasterBar, Measure};
+pub use measure::{
+    check_voice_duration, Direction, Marker, MasterBar, Measure, MeasureDurationStatus,
+};
 pub use beat::{Beat, Voice};
 pub use note::Note;

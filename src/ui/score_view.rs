@@ -1,11 +1,11 @@
-//! 乐谱主视图 — 轨道显示器：滚动、缩放、点击定位、播放头。
+//! 乐谱主视图 — 轨道显示器：滚动、缩放、点击选中/定位、播放头。
 
 use egui::{Pos2, ScrollArea, Sense, Stroke, Ui};
 use bassoxide_audio::{score_secs_in_measure, score_timeline, snap_to_nearest_beat};
 use bassoxide_layout::engine::LayoutResult;
-use bassoxide_render::ScorePainter;
+use bassoxide_render::{EditCursor, ScorePainter};
 
-use crate::state::AppState;
+use crate::state::{AppState, CursorPosition};
 use crate::ui::material::MaterialPalette;
 
 /// 绘制乐谱主视图（轨道显示器）
@@ -26,20 +26,17 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
         state.needs_relayout = true;
     }
 
-    let (song, layout) = match (&state.song, &state.layout) {
-        (Some(s), Some(l)) => (s, l),
-        _ => {
-            ui.painter().rect_filled(ui.max_rect(), 0.0, palette.surface);
-            ui.centered_and_justified(|ui| {
-                ui.heading(egui::RichText::new("Bassoxide").color(palette.on_surface));
-                ui.label(
-                    egui::RichText::new("按 Ctrl+O 打开乐谱 / .bso 工程")
-                        .color(palette.on_surface_variant),
-                );
-            });
-            return;
-        }
-    };
+    if state.song.is_none() || state.layout.is_none() {
+        ui.painter().rect_filled(ui.max_rect(), 0.0, palette.surface);
+        ui.centered_and_justified(|ui| {
+            ui.heading(egui::RichText::new("Bassoxide").color(palette.on_surface));
+            ui.label(
+                egui::RichText::new("按 Ctrl+O 打开乐谱 / .bso 工程")
+                    .color(palette.on_surface_variant),
+            );
+        });
+        return;
+    }
 
     let playhead = state
         .audio_player
@@ -47,62 +44,195 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
         .map(|p| p.score_position_secs())
         .unwrap_or(0.0);
     let selected = state.selected_track;
+    let edit_cursor = EditCursor {
+        track: state.cursor.track,
+        measure: state.cursor.measure,
+        beat: state.cursor.beat,
+        string: state.cursor.string,
+    };
+    let layout_settings = state.layout_settings.clone();
 
     let viewport = ui.available_size();
-    let page_w = layout.total_width;
-    let page_h = layout.total_height;
-    let center_pad_x = ((viewport.x - page_w).max(0.0) * 0.5).floor();
-    let content_width = (page_w + center_pad_x * 2.0 + 48.0).max(viewport.x);
-    let content_height = (page_h + 64.0).max(viewport.y);
+    // 在独立作用域内借用 song/layout，结束后再写回 cursor/seek
+    let (seek_request, cursor_hit) = {
+        let song = state.song.as_ref().unwrap();
+        let layout = state.layout.as_ref().unwrap();
+        let theme = &state.theme;
 
-    let mut seek_request: Option<f64> = None;
+        let page_w = layout.total_width;
+        let page_h = layout.total_height;
+        let center_pad_x = ((viewport.x - page_w).max(0.0) * 0.5).floor();
+        let content_width = (page_w + center_pad_x * 2.0 + 48.0).max(viewport.x);
+        let content_height = (page_h + 64.0).max(viewport.y);
 
-    ScrollArea::both()
-        .auto_shrink([false, false])
-        .drag_to_scroll(true)
-        .show(ui, |ui| {
-            let (response, painter) = ui.allocate_painter(
-                egui::Vec2::new(content_width, content_height),
-                Sense::click(),
-            );
+        let mut seek_request: Option<f64> = None;
+        let mut cursor_hit: Option<CursorPosition> = None;
 
-            painter.rect_filled(response.rect, 0.0, palette.surface);
-
-            let offset = egui::vec2(
-                response.rect.min.x + center_pad_x + 24.0,
-                response.rect.min.y + 24.0,
-            );
-
-            let score_painter = ScorePainter::new(&state.layout_settings, &state.theme);
-            score_painter.paint(&painter, song, layout, offset);
-
-            // 播放头（按谱面时间映射到小节 x）
-            if let Some((x, y, h)) = playhead_geometry(layout, song, playhead, selected) {
-                let px = x + offset.x;
-                let top = y + offset.y;
-                painter.line_segment(
-                    [Pos2::new(px, top), Pos2::new(px, top + h)],
-                    Stroke::new(2.0_f32, palette.error),
+        ScrollArea::both()
+            .auto_shrink([false, false])
+            .drag_to_scroll(true)
+            .show(ui, |ui| {
+                let (response, painter) = ui.allocate_painter(
+                    egui::Vec2::new(content_width, content_height),
+                    Sense::click(),
                 );
-            }
 
-            if response.clicked() {
-                if let Some(pos) = response.interact_pointer_pos() {
-                    let local = Pos2::new(pos.x - offset.x, pos.y - offset.y);
-                    if let Some(secs) = score_secs_at_layout_pos(layout, song, selected, local) {
-                        seek_request = Some(secs);
+                painter.rect_filled(response.rect, 0.0, palette.surface);
+
+                let offset = egui::vec2(
+                    response.rect.min.x + center_pad_x + 24.0,
+                    response.rect.min.y + 24.0,
+                );
+
+                let score_painter =
+                    ScorePainter::new(&layout_settings, theme).with_edit_cursor(edit_cursor);
+                score_painter.paint(&painter, song, layout, offset);
+
+                if let Some((x, y, h)) = playhead_geometry(layout, song, playhead, selected) {
+                    let px = x + offset.x;
+                    let top = y + offset.y;
+                    painter.line_segment(
+                        [Pos2::new(px, top), Pos2::new(px, top + h)],
+                        Stroke::new(2.0_f32, palette.error),
+                    );
+                }
+
+                if response.clicked() {
+                    if let Some(pos) = response.interact_pointer_pos() {
+                        let local = Pos2::new(pos.x - offset.x, pos.y - offset.y);
+                        let shift = ui.ctx().input(|i| i.modifiers.shift);
+                        if let Some(hit) =
+                            hit_test_cursor(layout, song, selected, local, &layout_settings)
+                        {
+                            cursor_hit = Some(hit);
+                            if shift {
+                                if let Some(secs) =
+                                    score_secs_at_layout_pos(layout, song, selected, local)
+                                {
+                                    seek_request = Some(secs);
+                                }
+                            }
+                        } else if let Some(secs) =
+                            score_secs_at_layout_pos(layout, song, selected, local)
+                        {
+                            seek_request = Some(secs);
+                        }
                     }
                 }
-            }
-        });
+            });
 
+        (seek_request, cursor_hit)
+    };
+
+    if let Some(c) = cursor_hit {
+        state.status_message = format!(
+            "选中 小节{} 拍{} 弦{}",
+            c.measure + 1,
+            c.beat + 1,
+            c.string
+        );
+        state.cursor = c;
+        state.fret_input.clear();
+    }
     if let Some(secs) = seek_request {
-        // 点击谱面：跳转到对应位置并播放
         state.seek_score_secs(secs, true);
     }
 }
 
-/// 布局坐标 → 谱面时间（吸附拍点）
+/// 布局坐标 → 编辑光标（最近 beat + 最近弦）
+fn hit_test_cursor(
+    layout: &LayoutResult,
+    song: &bassoxide_core::song::Song,
+    selected_track: usize,
+    pos: Pos2,
+    settings: &bassoxide_layout::spacing::LayoutSettings,
+) -> Option<CursorPosition> {
+    let track = song.tracks.get(selected_track)?;
+    let string_count = track
+        .tuning
+        .string_count()
+        .max(track.staff_display.tab_strings as usize)
+        .clamp(1, 8);
+
+    for system in &layout.systems {
+        if pos.y < system.y || pos.y > system.y + system.height {
+            continue;
+        }
+        let staff = system
+            .staves
+            .iter()
+            .find(|s| {
+                s.track_index == selected_track
+                    && s.staff_type == bassoxide_layout::staff::StaffType::Tablature
+            })
+            .or_else(|| {
+                system
+                    .staves
+                    .iter()
+                    .find(|s| s.track_index == selected_track)
+            })?;
+        let staff_y = system.y + staff.y;
+        if pos.y < staff_y - 4.0 || pos.y > staff_y + staff.height + settings.rhythm_height {
+            continue;
+        }
+
+        for mp in &system.measure_positions {
+            if pos.x < mp.x || pos.x > mp.x + mp.width {
+                continue;
+            }
+            let rel = pos.x - mp.x;
+            let beats = layout
+                .beat_positions
+                .get(mp.measure_index)
+                .and_then(|tracks| tracks.get(selected_track))?;
+            if beats.is_empty() {
+                return Some(CursorPosition {
+                    track: selected_track,
+                    measure: mp.measure_index,
+                    beat: 0,
+                    string: string_from_y(pos.y - staff_y, string_count, settings),
+                });
+            }
+            let mut best_i = 0usize;
+            let mut best_d = f32::MAX;
+            for (i, b) in beats.iter().enumerate() {
+                let cx = b.x + b.width * 0.5;
+                let d = (rel - cx).abs();
+                if d < best_d {
+                    best_d = d;
+                    best_i = i;
+                }
+            }
+            let beat_index = beats[best_i].beat_index;
+            return Some(CursorPosition {
+                track: selected_track,
+                measure: mp.measure_index,
+                beat: beat_index,
+                string: string_from_y(pos.y - staff_y, string_count, settings),
+            });
+        }
+    }
+    None
+}
+
+fn string_from_y(
+    y_in_staff: f32,
+    string_count: usize,
+    settings: &bassoxide_layout::spacing::LayoutSettings,
+) -> u8 {
+    let mut best = 1u8;
+    let mut best_d = f32::MAX;
+    for s in 1..=string_count as u8 {
+        let sy = bassoxide_layout::tablature::string_y_offset(s, string_count, settings);
+        let d = (y_in_staff - sy).abs();
+        if d < best_d {
+            best_d = d;
+            best = s;
+        }
+    }
+    best
+}
+
 fn score_secs_at_layout_pos(
     layout: &LayoutResult,
     song: &bassoxide_core::song::Song,
@@ -119,7 +249,6 @@ fn score_secs_at_layout_pos(
                 continue;
             }
             let rel = pos.x - mp.x;
-            // 优先落到最近 beat 列
             if let Some(beats) = layout
                 .beat_positions
                 .get(mp.measure_index)
@@ -153,7 +282,6 @@ fn score_secs_at_layout_pos(
     None
 }
 
-/// 播放头在布局中的竖线几何
 fn playhead_geometry(
     layout: &LayoutResult,
     song: &bassoxide_core::song::Song,

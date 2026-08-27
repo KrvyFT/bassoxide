@@ -312,7 +312,7 @@ pub fn apply_meta_and_song(state: &mut AppState, loaded: &BsoLoaded, project_pat
         track: loaded.meta.cursor.track,
         measure: loaded.meta.cursor.measure,
         beat: loaded.meta.cursor.beat,
-        string: loaded.meta.cursor.string as usize,
+        string: loaded.meta.cursor.string,
     };
     state.set_light_theme(loaded.meta.is_light_theme);
     state.playback_rate = loaded.meta.playback_rate.clamp(0.5, 1.5);
@@ -326,7 +326,7 @@ pub fn apply_meta_and_song(state: &mut AppState, loaded: &BsoLoaded, project_pat
         track: loaded.meta.cursor.track,
         measure: loaded.meta.cursor.measure,
         beat: loaded.meta.cursor.beat,
-        string: loaded.meta.cursor.string as usize,
+        string: loaded.meta.cursor.string,
     };
     state.selected_track = loaded.meta.selected_track;
     state.zoom_factor = loaded.meta.zoom_factor;

@@ -17,12 +17,24 @@ use crate::ui::material::MaterialPalette;
 pub type AudioJobReceiver = Receiver<Result<AudioTrack, String>>;
 
 /// 编辑器光标位置
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct CursorPosition {
     pub track: usize,
     pub measure: usize,
     pub beat: usize,
-    pub string: usize,
+    /// 弦号 (1-based，与 Note.string 一致)
+    pub string: u8,
+}
+
+impl Default for CursorPosition {
+    fn default() -> Self {
+        Self {
+            track: 0,
+            measure: 0,
+            beat: 0,
+            string: 1,
+        }
+    }
 }
 
 /// 用户可调的谱面偏好（缩放前的基准值，以 A4 为参考）
@@ -107,6 +119,8 @@ pub struct AppState {
     pub loop_enabled: bool,
     /// 节拍器开关
     pub metronome_enabled: bool,
+    /// 品格数字输入缓冲
+    pub fret_input: crate::edit::FretInputBuffer,
 }
 
 impl Default for AppState {
@@ -152,6 +166,7 @@ impl Default for AppState {
             loop_b: None,
             loop_enabled: false,
             metronome_enabled: false,
+            fret_input: crate::edit::FretInputBuffer::default(),
         };
         state.apply_score_prefs();
         state
@@ -255,6 +270,10 @@ impl AppState {
     pub fn select_track(&mut self, index: usize) {
         if index != self.selected_track {
             self.selected_track = index;
+            self.cursor.track = index;
+            self.cursor.measure = 0;
+            self.cursor.beat = 0;
+            self.cursor.string = 1;
             self.needs_relayout = true;
         }
     }
