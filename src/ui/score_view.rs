@@ -1,6 +1,7 @@
 //! 乐谱主视图 — 轨道显示器：滚动、缩放、点选/拖选、小节选中、播放头。
 
 use std::collections::HashSet;
+use std::io::Write;
 
 use egui::{Pos2, Rect, ScrollArea, Sense, Stroke, Ui};
 use bassoxide_audio::{score_secs_in_measure, score_timeline, snap_to_nearest_beat};
@@ -9,6 +10,25 @@ use bassoxide_render::{EditCursor, ScorePainter};
 
 use crate::state::{AppState, CursorPosition, NoteRef};
 use crate::ui::material::MaterialPalette;
+
+// #region agent log
+fn select_dbg(hypothesis_id: &str, location: &str, message: &str, data: &str) {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let line = format!(
+        "{{\"hypothesisId\":\"{hypothesis_id}\",\"location\":\"{location}\",\"message\":\"{message}\",\"data\":{data},\"timestamp\":{ts}}}\n"
+    );
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/bassoxide_select_debug.log")
+    {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+// #endregion
 
 /// 绘制乐谱主视图（轨道显示器）
 pub fn score_view(ui: &mut Ui, state: &mut AppState) {
@@ -115,8 +135,14 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                     );
                 }
 
-                // 用原始指针状态做拖选，避免 ScrollArea / Sense 吞掉 drag 事件
-                let (primary_pressed, primary_down, primary_released, pointer_pos, shift) =
+                let shift = ui.ctx().input(|i| i.modifiers.shift);
+
+                // #region agent log
+                let clicked = response.clicked();
+                let drag_started = response.drag_started_by(egui::PointerButton::Primary);
+                let dragged = response.dragged_by(egui::PointerButton::Primary);
+                let drag_stopped = response.drag_stopped();
+                let (raw_pressed, raw_down, raw_released, raw_pos, decidedly_dragging) =
                     ui.ctx().input(|i| {
                         (
                             i.pointer.primary_pressed(),
@@ -126,67 +152,283 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                                 .interact_pos()
                                 .or(i.pointer.hover_pos())
                                 .or(i.pointer.latest_pos()),
-                            i.modifiers.shift,
+                            i.pointer.is_decidedly_dragging(),
                         )
                     });
-                let over_score = pointer_pos.is_some_and(|p| response.rect.contains(p));
+                let over_score = raw_pos.is_some_and(|p| response.rect.contains(p));
+                if clicked
+                    || drag_started
+                    || dragged
+                    || drag_stopped
+                    || raw_pressed
+                    || raw_released
+                {
+                    let ip = response.interact_pointer_pos();
+                    select_dbg(
+                        "A",
+                        "score_view.rs:sense",
+                        "pointer_frame",
+                        &format!(
+                            "{{\"clicked\":{clicked},\"drag_started\":{drag_started},\"dragged\":{dragged},\"drag_stopped\":{drag_stopped},\"raw_pressed\":{raw_pressed},\"raw_down\":{raw_down},\"raw_released\":{raw_released},\"decidedly_dragging\":{decidedly_dragging},\"over_score\":{over_score},\"interact_pos\":{},\"raw_pos\":{},\"hovered\":{},\"sense_click\":{},\"sense_drag\":{}}}",
+                            ip.map(|p| format!("{{\"x\":{},\"y\":{}}}", p.x, p.y))
+                                .unwrap_or_else(|| "null".into()),
+                            raw_pos
+                                .map(|p| format!("{{\"x\":{},\"y\":{}}}", p.x, p.y))
+                                .unwrap_or_else(|| "null".into()),
+                            response.hovered(),
+                            response.sense.senses_click(),
+                            response.sense.senses_drag(),
+                        ),
+                    );
+                }
+                // #endregion
 
-                if primary_pressed && over_score {
-                    if let Some(pos) = pointer_pos {
-                        new_drag_origin = Some(pos);
+                // 拖选：egui drag 回调 + 拖动中实时写入选区（避免 drag_stopped 丢终点）
+                if drag_started {
+                    new_drag_origin = response.interact_pointer_pos();
+                    if let Some(pos) = new_drag_origin {
                         let local = Pos2::new(pos.x - offset.x, pos.y - offset.y);
                         new_drag_anchor =
                             hit_test_cursor(layout, song, selected, local, &layout_settings);
+                        // #region agent log
+                        select_dbg(
+                            "C",
+                            "score_view.rs:drag_started",
+                            "anchor_from_drag_start",
+                            &format!(
+                                "{{\"screen\":{{\"x\":{},\"y\":{}}},\"local\":{{\"x\":{},\"y\":{}}},\"anchor\":{}}}",
+                                pos.x,
+                                pos.y,
+                                local.x,
+                                local.y,
+                                new_drag_anchor
+                                    .map(|a| format!(
+                                        "{{\"m\":{},\"b\":{},\"s\":{}}}",
+                                        a.measure, a.beat, a.string
+                                    ))
+                                    .unwrap_or_else(|| "null".into()),
+                            ),
+                        );
+                        // #endregion
                     }
                 }
 
                 let origin = new_drag_origin.or(drag_origin);
                 let anchor = new_drag_anchor.or(drag_anchor);
-                let dragging = origin.is_some() && (primary_down || primary_released);
-                let mut drag_distance = 0.0_f32;
-                if let (Some(o), Some(p)) = (origin, pointer_pos) {
-                    drag_distance = o.distance(p);
-                    if dragging && drag_distance > 4.0 {
-                        let rect = Rect::from_two_pos(o, p);
-                        painter.rect_filled(
-                            rect,
-                            0.0,
-                            egui::Color32::from_rgba_unmultiplied(60, 120, 200, 36),
-                        );
-                        painter.rect_stroke(
-                            rect,
-                            0.0,
-                            Stroke::new(1.0, palette.primary),
-                            egui::StrokeKind::Outside,
-                        );
-                        // 拖动中实时预览选区
-                        if let (Some(a), Some(p)) = (anchor, pointer_pos) {
-                            let local = Pos2::new(p.x - offset.x, p.y - offset.y);
-                            if let Some(b) =
-                                hit_test_cursor(layout, song, selected, local, &layout_settings)
-                            {
-                                let notes = collect_notes_in_cell_range(song, selected, a, b);
-                                if !notes.is_empty() {
-                                    select_notes = Some(notes);
+                let mut did_drag_select = false;
+
+                if dragged {
+                    if let (Some(o), Some(pointer)) = (origin, response.interact_pointer_pos()) {
+                        new_drag_origin = Some(o);
+                        new_drag_anchor = anchor;
+                        let rect = Rect::from_two_pos(o, pointer);
+                        if rect.width().abs() > 3.0 || rect.height().abs() > 3.0 {
+                            painter.rect_filled(
+                                rect,
+                                0.0,
+                                egui::Color32::from_rgba_unmultiplied(60, 120, 200, 36),
+                            );
+                            painter.rect_stroke(
+                                rect,
+                                0.0,
+                                Stroke::new(1.0, palette.primary),
+                                egui::StrokeKind::Outside,
+                            );
+                            if let Some(a) = anchor {
+                                let local =
+                                    Pos2::new(pointer.x - offset.x, pointer.y - offset.y);
+                                if let Some(b) = hit_test_cursor(
+                                    layout,
+                                    song,
+                                    selected,
+                                    local,
+                                    &layout_settings,
+                                ) {
+                                    let notes =
+                                        collect_notes_in_cell_range(song, selected, a, b);
+                                    // #region agent log
+                                    select_dbg(
+                                        "C",
+                                        "score_view.rs:dragged",
+                                        "collect_during_drag",
+                                        &format!(
+                                            "{{\"anchor\":{{\"m\":{},\"b\":{},\"s\":{}}},\"end\":{{\"m\":{},\"b\":{},\"s\":{}}},\"local\":{{\"x\":{},\"y\":{}}},\"note_count\":{},\"dist\":{}}}",
+                                            a.measure,
+                                            a.beat,
+                                            a.string,
+                                            b.measure,
+                                            b.beat,
+                                            b.string,
+                                            local.x,
+                                            local.y,
+                                            notes.len(),
+                                            o.distance(pointer),
+                                        ),
+                                    );
+                                    // #endregion
+                                    if !notes.is_empty() {
+                                        select_notes = Some(notes);
+                                        did_drag_select = true;
+                                    }
+                                } else {
+                                    // #region agent log
+                                    select_dbg(
+                                        "C",
+                                        "score_view.rs:dragged",
+                                        "end_hit_none",
+                                        &format!(
+                                            "{{\"local\":{{\"x\":{},\"y\":{}}},\"anchor_ok\":true}}",
+                                            local.x, local.y
+                                        ),
+                                    );
+                                    // #endregion
                                 }
+                            } else {
+                                // #region agent log
+                                select_dbg(
+                                    "C",
+                                    "score_view.rs:dragged",
+                                    "anchor_none",
+                                    &format!(
+                                        "{{\"pointer\":{{\"x\":{},\"y\":{}}}}}",
+                                        pointer.x, pointer.y
+                                    ),
+                                );
+                                // #endregion
                             }
                         }
                     }
                 }
 
-                if primary_released && origin.is_some() {
-                    if drag_distance > 4.0 {
-                        // 多选已在上方写入 select_notes
-                    } else if let Some(pos) = pointer_pos.or(origin) {
-                        // 单击：小节热区优先，否则单音
+                if drag_stopped {
+                    // 终点再算一次，防止最后一帧 dragged 未触发
+                    if !did_drag_select {
+                        let end_pos = response
+                            .interact_pointer_pos()
+                            .or_else(|| ui.ctx().input(|i| i.pointer.latest_pos()));
+                        if let (Some(a), Some(end_screen), Some(o)) = (anchor, end_pos, origin) {
+                            if o.distance(end_screen) > 4.0 {
+                                let local =
+                                    Pos2::new(end_screen.x - offset.x, end_screen.y - offset.y);
+                                if let Some(b) = hit_test_cursor(
+                                    layout,
+                                    song,
+                                    selected,
+                                    local,
+                                    &layout_settings,
+                                ) {
+                                    let notes =
+                                        collect_notes_in_cell_range(song, selected, a, b);
+                                    // #region agent log
+                                    select_dbg(
+                                        "C",
+                                        "score_view.rs:drag_stopped",
+                                        "collect_on_stop",
+                                        &format!(
+                                            "{{\"note_count\":{},\"dist\":{},\"did_drag_select\":{did_drag_select}}}",
+                                            notes.len(),
+                                            o.distance(end_screen),
+                                        ),
+                                    );
+                                    // #endregion
+                                    if !notes.is_empty() {
+                                        select_notes = Some(notes);
+                                    }
+                                }
+                            } else {
+                                // #region agent log
+                                select_dbg(
+                                    "C",
+                                    "score_view.rs:drag_stopped",
+                                    "dist_too_small",
+                                    &format!("{{\"dist\":{}}}", o.distance(end_screen)),
+                                );
+                                // #endregion
+                            }
+                        } else {
+                            // #region agent log
+                            select_dbg(
+                                "A",
+                                "score_view.rs:drag_stopped",
+                                "missing_anchor_or_pos",
+                                &format!(
+                                    "{{\"has_anchor\":{},\"has_end\":{},\"has_origin\":{},\"did_drag_select\":{did_drag_select}}}",
+                                    anchor.is_some(),
+                                    end_pos.is_some(),
+                                    origin.is_some(),
+                                ),
+                            );
+                            // #endregion
+                        }
+                    }
+                    clear_drag = true;
+                    new_drag_origin = None;
+                    new_drag_anchor = None;
+                } else if clicked {
+                    clear_drag = true;
+                    new_drag_origin = None;
+                    new_drag_anchor = None;
+                    if let Some(pos) = response.interact_pointer_pos() {
                         let local = Pos2::new(pos.x - offset.x, pos.y - offset.y);
-                        if let Some(m) =
-                            hit_test_measure_header(layout, song, selected, local, &layout_settings)
-                        {
+                        let header_hit = hit_test_measure_header(
+                            layout,
+                            song,
+                            selected,
+                            local,
+                            &layout_settings,
+                        );
+                        let cursor_ht = hit_test_cursor(
+                            layout,
+                            song,
+                            selected,
+                            local,
+                            &layout_settings,
+                        );
+                        // #region agent log
+                        let header_band = layout.systems.iter().find_map(|system| {
+                            system.staves.iter().find(|s| {
+                                s.track_index == selected
+                                    && s.staff_type
+                                        == bassoxide_layout::staff::StaffType::Tablature
+                            }).map(|staff| {
+                                let staff_y = system.y + staff.y;
+                                let top = staff_y - 36.0;
+                                let bot = staff_y
+                                    + (layout_settings.note_pad() * 0.4).clamp(4.0, 12.0);
+                                format!(
+                                    "{{\"staff_y\":{staff_y},\"top\":{top},\"bot\":{bot},\"in_y\":{}}}",
+                                    local.y >= top && local.y <= bot
+                                )
+                            })
+                        });
+                        select_dbg(
+                            "B",
+                            "score_view.rs:clicked",
+                            "click_hit_tests",
+                            &format!(
+                                "{{\"screen\":{{\"x\":{},\"y\":{}}},\"local\":{{\"x\":{},\"y\":{}}},\"offset\":{{\"x\":{},\"y\":{}}},\"header\":{},\"cursor\":{},\"header_band\":{}}}",
+                                pos.x,
+                                pos.y,
+                                local.x,
+                                local.y,
+                                offset.x,
+                                offset.y,
+                                header_hit
+                                    .map(|m| m.to_string())
+                                    .unwrap_or_else(|| "null".into()),
+                                cursor_ht
+                                    .map(|c| format!(
+                                        "{{\"m\":{},\"b\":{},\"s\":{}}}",
+                                        c.measure, c.beat, c.string
+                                    ))
+                                    .unwrap_or_else(|| "null".into()),
+                                header_band.unwrap_or_else(|| "null".into()),
+                            ),
+                        );
+                        // #endregion
+                        if let Some(m) = header_hit {
                             select_measure = Some(m);
-                            if let Some(hit) =
-                                hit_test_cursor(layout, song, selected, local, &layout_settings)
-                            {
+                            if let Some(hit) = cursor_ht {
                                 cursor_hit = Some(CursorPosition {
                                     track: selected,
                                     measure: m,
@@ -201,17 +443,18 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                                     string: 1,
                                 });
                             }
-                        } else if let Some(hit) =
-                            hit_test_cursor(layout, song, selected, local, &layout_settings)
-                        {
+                        } else if let Some(hit) = cursor_ht {
                             cursor_hit = Some(hit);
                             if !shift {
                                 clear_selection = true;
                             }
                             if shift {
-                                if let Some(secs) =
-                                    score_secs_at_layout_pos(layout, song, selected, local)
-                                {
+                                if let Some(secs) = score_secs_at_layout_pos(
+                                    layout,
+                                    song,
+                                    selected,
+                                    local,
+                                ) {
                                     seek_request = Some(secs);
                                 }
                             }
@@ -220,13 +463,16 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
                         {
                             seek_request = Some(secs);
                         }
+                    } else {
+                        // #region agent log
+                        select_dbg(
+                            "B",
+                            "score_view.rs:clicked",
+                            "clicked_but_no_interact_pos",
+                            "{\"interact_pointer_pos\":null}",
+                        );
+                        // #endregion
                     }
-                    clear_drag = true;
-                    new_drag_origin = None;
-                    new_drag_anchor = None;
-                } else if primary_down && origin.is_some() {
-                    new_drag_origin = origin;
-                    new_drag_anchor = anchor;
                 }
             });
     }
@@ -245,6 +491,14 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
 
     if let Some(notes) = select_notes {
         let n = notes.len();
+        // #region agent log
+        select_dbg(
+            "D",
+            "score_view.rs:apply",
+            "select_notes_applied",
+            &format!("{{\"n\":{n}}}"),
+        );
+        // #endregion
         state.selection.measure = None;
         state.selection.notes = notes;
         if let Some(first) = state.selection.notes.iter().next().copied() {
@@ -256,6 +510,14 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
         state.fret_input.clear();
         state.status_message = format!("已选中 {} 个音符", n);
     } else if let Some(m) = select_measure {
+        // #region agent log
+        select_dbg(
+            "D",
+            "score_view.rs:apply",
+            "select_measure_applied",
+            &format!("{{\"m\":{m}}}"),
+        );
+        // #endregion
         state.selection.clear();
         state.selection.measure = Some(m);
         // 填入该小节全部音符，便于批量改品格
@@ -283,6 +545,17 @@ pub fn score_view(ui: &mut Ui, state: &mut AppState) {
         state.fret_input.clear();
         state.status_message = format!("选中小节 {}", m + 1);
     } else if let Some(c) = cursor_hit {
+        // #region agent log
+        select_dbg(
+            "D",
+            "score_view.rs:apply",
+            "select_single_or_add",
+            &format!(
+                "{{\"m\":{},\"b\":{},\"s\":{},\"clear_selection\":{clear_selection}}}",
+                c.measure, c.beat, c.string
+            ),
+        );
+        // #endregion
         if clear_selection {
             state.selection.select_single(c);
         } else {
