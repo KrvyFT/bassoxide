@@ -270,10 +270,11 @@ mod tests {
         player.set_audio(samples, 44100);
         player.play();
         assert_eq!(player.status(), PlaybackStatus::Playing);
+        // tick 会把单帧 dt 钳制到 0.1，避免掉帧跳表
         player.tick(0.5);
         let t = player.score_position_secs();
-        assert!((t - 0.5).abs() < 1e-6, "t={t}");
-        player.tick(0.25);
-        assert!((player.score_position_secs() - 0.75).abs() < 1e-6);
+        assert!((t - 0.1).abs() < 1e-6, "t={t}");
+        player.tick(0.05);
+        assert!((player.score_position_secs() - 0.15).abs() < 1e-6);
     }
 }
