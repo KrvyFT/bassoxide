@@ -12,4 +12,4 @@ pub mod staff_render;
 pub mod effect_render;
 
 pub use colors::Theme;
-pub use score_painter::ScorePainter;
+pub use score_painter::{EditCursor, ScorePainter};
