@@ -237,7 +237,7 @@ pub fn draw_measure_rhythm(
     }
 }
 
-/// Bravura 符尾字形（向下）：左上角锚在符干底端，再叠一小段符干保证接缝相连
+/// Bravura 符尾：按字形 mesh 墨水边界贴到符干底端（避开 em 字框空白造成的缝隙）
 fn draw_flag_glyph(
     painter: &Painter,
     x: f32,
@@ -251,21 +251,19 @@ fn draw_flag_glyph(
         return;
     };
     let font = egui::FontId::new(size, crate::music_font::music_family());
-    // egui 文本框顶边对齐；略上移让旗头顶进符干，消除缝隙
-    let attach_y = stem_bottom - (size * 0.06).clamp(0.8, 2.5);
-    painter.text(
-        Pos2::new(x - stem_w * 0.35, attach_y),
-        egui::Align2::LEFT_TOP,
-        glyph.to_string(),
-        font,
-        theme.note_text,
-    );
-    // 符干末端再盖一层，视觉上与符尾连成一体
-    let join = (size * 0.12).clamp(2.0, 5.0);
+    let galley = painter.layout_no_wrap(glyph.to_string(), font, theme.note_text);
+    // mesh_bounds 是实际三角网格（墨水），不是含大量空白的 em 字框
+    let ink = galley.mesh_bounds;
+    // 符干底端对齐墨水左上；略上移 1px 咬合
+    let overlap = stem_w.max(1.0);
+    let pos = Pos2::new(x - ink.min.x - stem_w * 0.25, stem_bottom - ink.min.y - overlap);
+    painter.galley(pos, galley, theme.note_text);
+    // 符干再向下盖进符尾，确保视觉相连
+    let into = (ink.height() * 0.22).clamp(3.0, 10.0);
     painter.line_segment(
         [
-            Pos2::new(x, stem_bottom - join),
-            Pos2::new(x, stem_bottom + join * 0.35),
+            Pos2::new(x, stem_bottom - into),
+            Pos2::new(x, stem_bottom + into),
         ],
         Stroke::new(stem_w, theme.note_text),
     );

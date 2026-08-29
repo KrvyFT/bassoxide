@@ -90,39 +90,29 @@ pub fn draw_tab_rest_duration(
         _ => (settings.tab_font_size * 2.05).clamp(18.0, 40.0),
     };
     let font = egui::FontId::new(size, crate::music_font::music_family());
+    let galley = painter.layout_no_wrap(glyph.to_string(), font, theme.rest_color);
+    let ink = galley.mesh_bounds;
 
-    let bg_w = match value {
-        NoteValue::Whole | NoteValue::Half => size * 0.85,
-        _ => size * 0.5,
-    };
     let dot_extra = if duration.dotted || duration.double_dotted {
-        size * 0.55
+        size * 0.45
     } else {
         0.0
     };
     let bg = Rect::from_center_size(
-        Pos2::new(x + dot_extra * 0.25, y),
-        Vec2::new(bg_w + dot_extra, size * 0.9),
+        Pos2::new(x + dot_extra * 0.2, y),
+        Vec2::new(ink.width().max(size * 0.4) + dot_extra + 4.0, ink.height().max(size * 0.5) + 4.0),
     );
     painter.rect_filled(bg, 0.0, theme.background);
 
-    painter.text(
-        Pos2::new(x, y),
-        egui::Align2::CENTER_CENTER,
-        glyph.to_string(),
-        font,
-        theme.rest_color,
-    );
+    // 墨水中心对齐目标点（避免 SMuFL em 框导致休止符飘到谱表上方）
+    let pos = Pos2::new(x - ink.center().x, y - ink.center().y);
+    painter.galley(pos, galley, theme.rest_color);
 
-    // 附点：紧贴休止符右侧
+    // 附点：紧贴休止符墨水右侧
     if duration.dotted || duration.double_dotted {
         let dots = if duration.double_dotted { 2 } else { 1 };
         let r = (size * 0.07).clamp(1.2, 2.6);
-        let base_x = x + match value {
-            NoteValue::Whole | NoteValue::Half => size * 0.42,
-            NoteValue::Quarter => size * 0.32,
-            _ => size * 0.28,
-        };
+        let base_x = x + ink.width() * 0.55 + r;
         for i in 0..dots {
             painter.circle_filled(
                 Pos2::new(base_x + i as f32 * r * 2.6, y),
