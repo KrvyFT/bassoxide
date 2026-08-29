@@ -93,18 +93,7 @@ pub fn draw_tab_rest_duration(
     let galley = painter.layout_no_wrap(glyph.to_string(), font, theme.rest_color);
     let ink = galley.mesh_bounds;
 
-    let dot_extra = if duration.dotted || duration.double_dotted {
-        size * 0.45
-    } else {
-        0.0
-    };
-    let bg = Rect::from_center_size(
-        Pos2::new(x + dot_extra * 0.2, y),
-        Vec2::new(ink.width().max(size * 0.4) + dot_extra + 4.0, ink.height().max(size * 0.5) + 4.0),
-    );
-    painter.rect_filled(bg, 0.0, theme.background);
-
-    // 墨水中心对齐目标点（避免 SMuFL em 框导致休止符飘到谱表上方）
+    // 仅画字形（最底层）；不铺底色，谱线/音符叠在其上
     let pos = Pos2::new(x - ink.center().x, y - ink.center().y);
     painter.galley(pos, galley, theme.rest_color);
 

@@ -102,6 +102,41 @@ impl<'a> ScorePainter<'a> {
                         None => continue,
                     };
 
+                    // 休止符 Bravura 字形：整条谱表最底层（谱线 / 音符 / 符杆之下）
+                    if staff.staff_type == bassoxide_layout::staff::StaffType::Tablature {
+                        for measure_pos in &system.measure_positions {
+                            let m = measure_pos.measure_index;
+                            let measure_x = measure_pos.x + offset.x;
+                            let Some(measure) = track.measures.get(m) else {
+                                continue;
+                            };
+                            let voice = measure.primary_voice();
+                            let Some(beat_positions) = layout
+                                .beat_positions
+                                .get(m)
+                                .and_then(|tracks| tracks.get(track_idx))
+                            else {
+                                continue;
+                            };
+                            let merged = crate::music_font::plan_merged_rests(
+                                voice.beats.as_slice(),
+                                beat_positions,
+                                measure_x,
+                            );
+                            for r in &merged {
+                                note_render::draw_tab_rest_duration(
+                                    painter,
+                                    r.x,
+                                    staff_y,
+                                    staff.height,
+                                    r.duration,
+                                    self.settings,
+                                    self.theme,
+                                );
+                            }
+                        }
+                    }
+
                     match staff.staff_type {
                         bassoxide_layout::staff::StaffType::Standard => {
                             staff_render::draw_standard_staff(
@@ -226,28 +261,6 @@ impl<'a> ScorePainter<'a> {
                                     .iter()
                                     .map(|bp| (bp.beat_index, measure_x + bp.x))
                                     .collect();
-
-                                // 休止符：连续空格自动合并为更大时值（仅显示层）
-                                if staff.staff_type
-                                    == bassoxide_layout::staff::StaffType::Tablature
-                                {
-                                    let merged = crate::music_font::plan_merged_rests(
-                                        voice.beats.as_slice(),
-                                        beat_positions,
-                                        measure_x,
-                                    );
-                                    for r in &merged {
-                                        note_render::draw_tab_rest_duration(
-                                            painter,
-                                            r.x,
-                                            staff_y,
-                                            staff.height,
-                                            r.duration,
-                                            self.settings,
-                                            self.theme,
-                                        );
-                                    }
-                                }
 
                                 for bp in beat_positions {
                                     if let Some(beat) = voice.beats.get(bp.beat_index) {
