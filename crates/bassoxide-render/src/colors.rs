@@ -52,10 +52,10 @@ impl Theme {
     /// 浅色主题
     pub fn light() -> Self {
         Self {
-            staff_line: Color32::from_gray(180),
-            bar_line: Color32::from_gray(80),
+            staff_line: Color32::from_gray(200),
+            bar_line: Color32::from_gray(110),
             note_text: Color32::from_gray(20),
-            rest_color: Color32::from_gray(120),
+            rest_color: Color32::from_gray(45),
             selected_note: Color32::from_rgb(30, 100, 200),
             cursor_color: Color32::from_rgba_premultiplied(30, 100, 200, 80),
             marker_color: Color32::from_rgb(200, 120, 0),

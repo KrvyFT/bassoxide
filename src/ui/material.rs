@@ -168,10 +168,10 @@ impl MaterialPalette {
     pub fn to_score_theme(&self) -> Theme {
         if self.is_light {
             Theme {
-                staff_line: Color32::from_rgb(0xA8, 0xB5, 0xAC),
-                bar_line: Color32::from_rgb(0x40, 0x4A, 0x43),
-                note_text: self.on_surface,
-                rest_color: self.on_surface_variant,
+                staff_line: Color32::from_rgb(0xC8, 0xCE, 0xCA),
+                bar_line: Color32::from_rgb(0x6A, 0x72, 0x6C),
+                note_text: Color32::from_rgb(0x1A, 0x1C, 0x1A),
+                rest_color: Color32::from_rgb(0x2A, 0x2E, 0x2C),
                 selected_note: self.primary,
                 cursor_color: Color32::from_rgba_unmultiplied(
                     self.primary.r(),
