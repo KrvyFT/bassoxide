@@ -51,48 +51,82 @@ pub fn flag_glyph_down(level: u8) -> Option<char> {
     }
 }
 
-fn value_ticks(value: NoteValue) -> u32 {
+fn plain(value: NoteValue) -> Duration {
     Duration {
         value,
+        dotted: false,
+        double_dotted: false,
         ..Duration::default()
     }
-    .ticks()
 }
 
-/// 将连续休止的总 tick 贪心拆成尽量少的标准休止时值（大→小）
-pub fn merge_rest_values(total_ticks: u32) -> Vec<NoteValue> {
+fn dotted(value: NoteValue) -> Duration {
+    Duration {
+        value,
+        dotted: true,
+        double_dotted: false,
+        ..Duration::default()
+    }
+}
+
+/// 休止符合并候选：大→小，同 tick 时优先无附点的写法（更少符号）
+fn rest_merge_candidates() -> Vec<Duration> {
+    // 附点优先于「更大无附点拆分」：如 1440 → 附点四分，而非 四分+八分
+    [
+        plain(NoteValue::Whole),
+        dotted(NoteValue::Half), // 2880
+        plain(NoteValue::Half),
+        dotted(NoteValue::Quarter), // 1440
+        plain(NoteValue::Quarter),
+        dotted(NoteValue::Eighth), // 720
+        plain(NoteValue::Eighth),
+        dotted(NoteValue::Sixteenth), // 360
+        plain(NoteValue::Sixteenth),
+        dotted(NoteValue::ThirtySecond), // 180
+        plain(NoteValue::ThirtySecond),
+        plain(NoteValue::SixtyFourth),
+    ]
+    .into_iter()
+    .collect()
+}
+
+/// 将连续休止的总 tick 贪心拆成尽量少的标准休止时值（含附点）
+pub fn merge_rest_durations(total_ticks: u32) -> Vec<Duration> {
     if total_ticks == 0 {
         return Vec::new();
     }
-    let order = [
-        NoteValue::Whole,
-        NoteValue::Half,
-        NoteValue::Quarter,
-        NoteValue::Eighth,
-        NoteValue::Sixteenth,
-        NoteValue::ThirtySecond,
-        NoteValue::SixtyFourth,
-    ];
+    let candidates = rest_merge_candidates();
     let mut remaining = total_ticks;
     let mut out = Vec::new();
-    for &v in &order {
-        let t = value_ticks(v);
-        if t == 0 {
-            continue;
+    // 多轮扫描：每轮取能装下的最大候选（列表已按大致从大到小排列）
+    'outer: while remaining > 0 {
+        for c in &candidates {
+            let t = c.ticks();
+            if t > 0 && remaining >= t {
+                out.push(*c);
+                remaining -= t;
+                continue 'outer;
+            }
         }
-        while remaining >= t {
-            out.push(v);
-            remaining -= t;
-        }
+        // 无法再拆（理论不应发生）
+        break;
     }
     out
+}
+
+/// 兼容旧名：仅返回 NoteValue（无附点信息）
+pub fn merge_rest_values(total_ticks: u32) -> Vec<NoteValue> {
+    merge_rest_durations(total_ticks)
+        .into_iter()
+        .map(|d| d.value)
+        .collect()
 }
 
 /// 一次合并后的休止符绘制项（显示层；不改数据网格）
 #[derive(Debug, Clone, Copy)]
 pub struct MergedRestDraw {
     pub x: f32,
-    pub value: NoteValue,
+    pub duration: Duration,
 }
 
 /// 根据 voice beats + 布局拍位，生成合并后的休止符绘制列表
@@ -128,17 +162,17 @@ pub fn plan_merged_rests(
         if xs.is_empty() {
             continue;
         }
-        let values = merge_rest_values(ticks);
-        if values.is_empty() {
+        let durations = merge_rest_durations(ticks);
+        if durations.is_empty() {
             continue;
         }
         let x0 = *xs.first().unwrap();
         let x1 = *xs.last().unwrap();
         let span = (x1 - x0).max(1.0);
-        let single = values.len() == 1;
+        let single = durations.len() == 1;
         let mut acc = 0u32;
-        for v in values {
-            let t = value_ticks(v);
+        for d in durations {
+            let t = d.ticks();
             let mid_tick = acc + t / 2;
             let frac = if ticks == 0 {
                 0.0
@@ -150,7 +184,7 @@ pub fn plan_merged_rests(
             } else {
                 x0 + span * frac.clamp(0.0, 1.0)
             };
-            out.push(MergedRestDraw { x, value: v });
+            out.push(MergedRestDraw { x, duration: d });
             acc += t;
         }
     }
@@ -163,19 +197,45 @@ mod tests {
 
     #[test]
     fn eight_eighths_merge_to_whole() {
-        assert_eq!(merge_rest_values(3840), vec![NoteValue::Whole]);
+        let d = merge_rest_durations(3840);
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].value, NoteValue::Whole);
+        assert!(!d[0].dotted);
     }
 
     #[test]
     fn four_eighths_merge_to_half() {
-        assert_eq!(merge_rest_values(1920), vec![NoteValue::Half]);
+        let d = merge_rest_durations(1920);
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].value, NoteValue::Half);
+        assert!(!d[0].dotted);
     }
 
     #[test]
-    fn three_eighths_to_quarter_plus_eighth() {
+    fn three_eighths_merge_to_dotted_quarter() {
+        let d = merge_rest_durations(1440);
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].value, NoteValue::Quarter);
+        assert!(d[0].dotted);
+    }
+
+    #[test]
+    fn six_eighths_merge_to_dotted_half() {
+        let d = merge_rest_durations(2880);
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].value, NoteValue::Half);
+        assert!(d[0].dotted);
+    }
+
+    #[test]
+    fn five_eighths_to_half_plus_eighth() {
+        let d = merge_rest_durations(2400);
         assert_eq!(
-            merge_rest_values(1440),
-            vec![NoteValue::Quarter, NoteValue::Eighth]
+            d.iter().map(|x| (x.value, x.dotted)).collect::<Vec<_>>(),
+            vec![
+                (NoteValue::Half, false),
+                (NoteValue::Eighth, false),
+            ]
         );
     }
 }

@@ -237,12 +237,12 @@ impl<'a> ScorePainter<'a> {
                                         measure_x,
                                     );
                                     for r in &merged {
-                                        note_render::draw_tab_rest_value(
+                                        note_render::draw_tab_rest_duration(
                                             painter,
                                             r.x,
                                             staff_y,
                                             staff.height,
-                                            r.value,
+                                            r.duration,
                                             self.settings,
                                             self.theme,
                                         );

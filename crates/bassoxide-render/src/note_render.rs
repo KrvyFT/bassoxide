@@ -65,28 +65,21 @@ pub fn draw_tab_rest(
     settings: &LayoutSettings,
     theme: &Theme,
 ) {
-    draw_tab_rest_value(
-        painter,
-        x,
-        staff_y,
-        staff_height,
-        duration.value,
-        settings,
-        theme,
-    );
+    draw_tab_rest_duration(painter, x, staff_y, staff_height, duration, settings, theme);
 }
 
-/// 按 NoteValue 绘制单个合并后的休止符
-pub fn draw_tab_rest_value(
+/// 按合并后的 Duration 绘制休止符（含附点）
+pub fn draw_tab_rest_duration(
     painter: &Painter,
     x: f32,
     staff_y: f32,
     staff_height: f32,
-    value: bassoxide_core::types::NoteValue,
+    duration: bassoxide_core::types::Duration,
     settings: &LayoutSettings,
     theme: &Theme,
 ) {
     use bassoxide_core::types::NoteValue;
+    let value = duration.value;
     let glyph = crate::music_font::rest_glyph(value);
     // 成品谱：休止符落在弦线带中部偏上
     let y = staff_y + staff_height * 0.40;
@@ -102,7 +95,15 @@ pub fn draw_tab_rest_value(
         NoteValue::Whole | NoteValue::Half => size * 0.85,
         _ => size * 0.5,
     };
-    let bg = Rect::from_center_size(Pos2::new(x, y), Vec2::new(bg_w, size * 0.9));
+    let dot_extra = if duration.dotted || duration.double_dotted {
+        size * 0.55
+    } else {
+        0.0
+    };
+    let bg = Rect::from_center_size(
+        Pos2::new(x + dot_extra * 0.25, y),
+        Vec2::new(bg_w + dot_extra, size * 0.9),
+    );
     painter.rect_filled(bg, 0.0, theme.background);
 
     painter.text(
@@ -112,6 +113,24 @@ pub fn draw_tab_rest_value(
         font,
         theme.rest_color,
     );
+
+    // 附点：紧贴休止符右侧
+    if duration.dotted || duration.double_dotted {
+        let dots = if duration.double_dotted { 2 } else { 1 };
+        let r = (size * 0.07).clamp(1.2, 2.6);
+        let base_x = x + match value {
+            NoteValue::Whole | NoteValue::Half => size * 0.42,
+            NoteValue::Quarter => size * 0.32,
+            _ => size * 0.28,
+        };
+        for i in 0..dots {
+            painter.circle_filled(
+                Pos2::new(base_x + i as f32 * r * 2.6, y),
+                r,
+                theme.rest_color,
+            );
+        }
+    }
 }
 
 /// 计算 MIDI 音高在五线谱上的纵向位置 (0 = 第一线/最底线, 0.5 = 第一间)

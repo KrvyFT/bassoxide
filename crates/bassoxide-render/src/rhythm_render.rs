@@ -216,13 +216,19 @@ pub fn draw_measure_rhythm(
                     theme.note_text,
                 );
             } else if level == levels[i] {
-                // 仅最深一层画一次符尾（Bravura 字形）
+                // 仅最深一层画一次符尾；贴本拍符干底端并与符杆重叠衔接
+                let stem_bot = if stem_bottom_of[i] > 0.0 {
+                    stem_bottom_of[i]
+                } else {
+                    beam_base
+                };
                 draw_flag_glyph(
                     painter,
                     beats[i].x,
-                    beam_base,
+                    stem_bot,
                     levels[i],
                     flag_size,
+                    stem_w,
                     theme,
                 );
             }
@@ -231,26 +237,37 @@ pub fn draw_measure_rhythm(
     }
 }
 
-/// Bravura 符尾字形（向下），锚在符干底端
+/// Bravura 符尾字形（向下）：左上角锚在符干底端，再叠一小段符干保证接缝相连
 fn draw_flag_glyph(
     painter: &Painter,
     x: f32,
     stem_bottom: f32,
     level: u8,
     size: f32,
+    stem_w: f32,
     theme: &Theme,
 ) {
     let Some(glyph) = crate::music_font::flag_glyph_down(level) else {
         return;
     };
     let font = egui::FontId::new(size, crate::music_font::music_family());
-    // SMuFL 向下旗：附着点在符干底端，字形向右下展开
+    // egui 文本框顶边对齐；略上移让旗头顶进符干，消除缝隙
+    let attach_y = stem_bottom - (size * 0.06).clamp(0.8, 2.5);
     painter.text(
-        Pos2::new(x, stem_bottom),
+        Pos2::new(x - stem_w * 0.35, attach_y),
         egui::Align2::LEFT_TOP,
         glyph.to_string(),
         font,
         theme.note_text,
+    );
+    // 符干末端再盖一层，视觉上与符尾连成一体
+    let join = (size * 0.12).clamp(2.0, 5.0);
+    painter.line_segment(
+        [
+            Pos2::new(x, stem_bottom - join),
+            Pos2::new(x, stem_bottom + join * 0.35),
+        ],
+        Stroke::new(stem_w, theme.note_text),
     );
 }
 
