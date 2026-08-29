@@ -22,9 +22,9 @@ pub fn draw_tab_note(
 ) {
     let string_y =
         staff_y + tablature::string_y_offset(note.string, string_count, settings);
-    let text = tablature::fret_display(note.fret);
+    let text = tablature::tab_note_text(note);
 
-    let font = egui::FontId::new(settings.tab_font_size, egui::FontFamily::Monospace);
+    let font = egui::FontId::new(settings.tab_font_size, egui::FontFamily::Proportional);
     let color = if is_selected {
         theme.selected_note
     } else {
@@ -32,14 +32,20 @@ pub fn draw_tab_note(
     };
 
     // 先画一个小背景矩形清除弦线（让数字清晰可读）
-    let text_size = Vec2::new(settings.tab_font_size * 0.8, settings.tab_font_size);
+    let char_w = if text.len() > 2 {
+        settings.tab_font_size * 1.15
+    } else if text.len() > 1 {
+        settings.tab_font_size * 0.95
+    } else {
+        settings.tab_font_size * 0.7
+    };
+    let text_size = Vec2::new(char_w, settings.tab_font_size);
     let bg_rect = Rect::from_center_size(
         Pos2::new(x, string_y),
-        text_size + Vec2::new(4.0, 2.0),
+        text_size + Vec2::new(3.0, 1.5),
     );
     painter.rect_filled(bg_rect, 0.0, theme.background);
 
-    // 绘制品格数字
     painter.text(
         Pos2::new(x, string_y),
         egui::Align2::CENTER_CENTER,
@@ -47,6 +53,63 @@ pub fn draw_tab_note(
         font,
         color,
     );
+}
+
+/// 在 TAB 谱表中部绘制休止符（Bravura / SMuFL 高清字形）
+pub fn draw_tab_rest(
+    painter: &Painter,
+    x: f32,
+    staff_y: f32,
+    staff_height: f32,
+    duration: bassoxide_core::types::Duration,
+    settings: &LayoutSettings,
+    theme: &Theme,
+) {
+    draw_tab_rest_duration(painter, x, staff_y, staff_height, duration, settings, theme);
+}
+
+/// 按合并后的 Duration 绘制休止符（含附点）
+pub fn draw_tab_rest_duration(
+    painter: &Painter,
+    x: f32,
+    staff_y: f32,
+    staff_height: f32,
+    duration: bassoxide_core::types::Duration,
+    settings: &LayoutSettings,
+    theme: &Theme,
+) {
+    use bassoxide_core::types::NoteValue;
+    let value = duration.value;
+    let glyph = crate::music_font::rest_glyph(value);
+    // 成品谱：休止符落在弦线带中部偏上
+    let y = staff_y + staff_height * 0.40;
+    // 高清：放大字形，全/半休止略小以免过重
+    let size = match value {
+        NoteValue::Whole | NoteValue::Half => (settings.tab_font_size * 1.75).clamp(16.0, 36.0),
+        NoteValue::Quarter => (settings.tab_font_size * 1.9).clamp(17.0, 38.0),
+        _ => (settings.tab_font_size * 2.05).clamp(18.0, 40.0),
+    };
+    let font = egui::FontId::new(size, crate::music_font::music_family());
+    let galley = painter.layout_no_wrap(glyph.to_string(), font, theme.rest_color);
+    let ink = galley.mesh_bounds;
+
+    // 仅画字形（最底层）；不铺底色，谱线/音符叠在其上
+    let pos = Pos2::new(x - ink.center().x, y - ink.center().y);
+    painter.galley(pos, galley, theme.rest_color);
+
+    // 附点：紧贴休止符墨水右侧
+    if duration.dotted || duration.double_dotted {
+        let dots = if duration.double_dotted { 2 } else { 1 };
+        let r = (size * 0.07).clamp(1.2, 2.6);
+        let base_x = x + ink.width() * 0.55 + r;
+        for i in 0..dots {
+            painter.circle_filled(
+                Pos2::new(base_x + i as f32 * r * 2.6, y),
+                r,
+                theme.rest_color,
+            );
+        }
+    }
 }
 
 /// 计算 MIDI 音高在五线谱上的纵向位置 (0 = 第一线/最底线, 0.5 = 第一间)

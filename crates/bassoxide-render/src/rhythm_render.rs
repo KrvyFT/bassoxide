@@ -50,7 +50,7 @@ fn stem_fit_scale(beats: &[RhythmBeat], measure_width: f32, settings: &LayoutSet
 
 /// 绘制一小节的节奏符杆。
 ///
-/// 每个 `RhythmBeat.stem_top` 为该拍根音数字下沿；符干向下画到统一底部以便连杠。
+/// 每个 `RhythmBeat.stem_top` 为该拍**根音**数字下沿；符干由此向下画到统一底部以便连杠。
 /// `measure_width` 用于按小节实际宽度压缩符杆。
 pub fn draw_measure_rhythm(
     painter: &Painter,
@@ -65,18 +65,18 @@ pub fn draw_measure_rhythm(
 
     let dens = stem_fit_scale(beats, measure_width, settings);
     let max_stem = (settings.rhythm_height - 1.0).max(8.0);
-    let stem_len = ((settings.rhythm_height * 0.82).max(settings.tab_font_size * 1.15) * dens)
-        .clamp(10.0, max_stem);
-    let stem_stroke = Stroke::new(
-        (settings.tab_font_size * 0.085 * dens).clamp(0.7, 2.0),
-        theme.note_text,
-    );
-    let beam_thickness = ((settings.tab_font_size * 0.11).max(settings.rhythm_height * 0.07) * dens)
-        .clamp(0.9, 2.8);
-    let beam_gap = (beam_thickness + 1.2 * dens).max(1.8);
-    let stub_len = (5.0 * dens).max(2.5);
-    let dot_r = (1.1 * dens).clamp(0.7, 1.6);
-    let flag_scale = dens.clamp(0.4, 1.1);
+    // 成品谱：符干略长，保证与底弦有清晰空隙后仍够连杠
+    let stem_len = ((settings.rhythm_height * 0.92).max(settings.tab_font_size * 1.55) * dens)
+        .clamp(14.0, max_stem);
+    let stem_w = (settings.tab_font_size * 0.11 * dens).clamp(1.0, 2.4);
+    let stem_stroke = Stroke::new(stem_w, theme.note_text);
+    // 符杠：粗实心横条（接近 GP / 参考图）
+    let beam_thickness = ((settings.tab_font_size * 0.28).max(settings.rhythm_height * 0.12) * dens)
+        .clamp(2.2, 4.5);
+    let beam_gap = (beam_thickness + 1.8 * dens).max(2.8);
+    let stub_len = (7.0 * dens).max(3.5);
+    let dot_r = (1.35 * dens).clamp(0.9, 2.0);
+    let flag_size = (settings.tab_font_size * 1.65 * dens).clamp(14.0, 34.0);
 
     let n = beats.len();
     let mut levels = vec![0u8; n];
@@ -143,8 +143,60 @@ pub fn draw_measure_rhythm(
         let top = rb.stem_top;
         let bottom = shared_bottom.max(top + stem_len * 0.55);
         stem_bottom_of[i] = bottom;
+    }
+
+    let beam_base = if shared_bottom > 0.0 {
+        shared_bottom
+    } else {
+        beats.first().map(|b| b.stem_top + stem_len).unwrap_or(0.0)
+    };
+
+    // ① 符尾字形最下层（先于符杆/符杠）
+    for i in 0..n {
+        if !is_note[i] || levels[i] == 0 {
+            continue;
+        }
+        let g = group_id[i];
+        let in_group = g != usize::MAX && group_size.get(&g).copied().unwrap_or(0) >= 2;
+        if in_group {
+            continue;
+        }
+        let stem_bot = if stem_bottom_of[i] > 0.0 {
+            stem_bottom_of[i]
+        } else {
+            beam_base
+        };
+        draw_flag_glyph(
+            painter,
+            beats[i].x,
+            stem_bot,
+            levels[i],
+            flag_size,
+            stem_w,
+            theme,
+        );
+    }
+
+    // ② 符杆叠在符尾之上，盖住附着缝
+    for (i, rb) in beats.iter().enumerate() {
+        if !is_note[i] {
+            continue;
+        }
+        if rb.beat.duration.value == NoteValue::Whole {
+            continue;
+        }
+        let top = rb.stem_top;
+        let bottom = stem_bottom_of[i];
+        // 孤立符尾：符杆略向下穿入字形
+        let g = group_id[i];
+        let in_group = g != usize::MAX && group_size.get(&g).copied().unwrap_or(0) >= 2;
+        let tip = if !in_group && levels[i] >= 1 {
+            bottom + (flag_size * 0.12).clamp(2.0, 6.0)
+        } else {
+            bottom
+        };
         painter.line_segment(
-            [Pos2::new(rb.x, top), Pos2::new(rb.x, bottom)],
+            [Pos2::new(rb.x, top), Pos2::new(rb.x, tip)],
             stem_stroke,
         );
 
@@ -160,12 +212,7 @@ pub fn draw_measure_rhythm(
         }
     }
 
-    let beam_base = if shared_bottom > 0.0 {
-        shared_bottom
-    } else {
-        beats.first().map(|b| b.stem_top + stem_len).unwrap_or(0.0)
-    };
-
+    // ③ 符杠最上层
     for level in 1..=4u8 {
         let beam_y = beam_base - (level as f32 - 1.0) * beam_gap;
         let mut i = 0usize;
@@ -188,9 +235,15 @@ pub fn draw_measure_rhythm(
             }
 
             if j > i {
-                painter.line_segment(
-                    [Pos2::new(beats[i].x, beam_y), Pos2::new(beats[j].x, beam_y)],
-                    Stroke::new(beam_thickness, theme.note_text),
+                let x0 = beats[i].x.min(beats[j].x);
+                let x1 = beats[i].x.max(beats[j].x);
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        Pos2::new(x0, beam_y - beam_thickness * 0.5),
+                        Pos2::new(x1, beam_y + beam_thickness * 0.5),
+                    ),
+                    0.0,
+                    theme.note_text,
                 );
             } else if in_group {
                 let dir = if i > 0 && group_id[i - 1] == g {
@@ -198,31 +251,44 @@ pub fn draw_measure_rhythm(
                 } else {
                     1.0
                 };
-                painter.line_segment(
-                    [
-                        Pos2::new(beats[i].x, beam_y),
-                        Pos2::new(beats[i].x + dir * stub_len, beam_y),
-                    ],
-                    Stroke::new(beam_thickness, theme.note_text),
+                let x0 = beats[i].x;
+                let x1 = beats[i].x + dir * stub_len;
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        Pos2::new(x0.min(x1), beam_y - beam_thickness * 0.5),
+                        Pos2::new(x0.max(x1), beam_y + beam_thickness * 0.5),
+                    ),
+                    0.0,
+                    theme.note_text,
                 );
-            } else {
-                draw_flag(painter, beats[i].x, beam_y, flag_scale, theme);
             }
             i = j + 1;
         }
     }
 }
 
-/// 绘制符尾（旗），向右下方弯出
-fn draw_flag(painter: &Painter, x: f32, y: f32, scale: f32, theme: &Theme) {
-    let stroke = Stroke::new((1.4 * scale).clamp(0.8, 2.0), theme.note_text);
-    painter.line_segment(
-        [
-            Pos2::new(x, y),
-            Pos2::new(x + 6.5 * scale, y + 3.5 * scale),
-        ],
-        stroke,
+/// Bravura 符尾：按 mesh 墨水贴符干底；仅画字形（由调用方先画，符杆后叠）
+fn draw_flag_glyph(
+    painter: &Painter,
+    x: f32,
+    stem_bottom: f32,
+    level: u8,
+    size: f32,
+    stem_w: f32,
+    theme: &Theme,
+) {
+    let Some(glyph) = crate::music_font::flag_glyph_down(level) else {
+        return;
+    };
+    let font = egui::FontId::new(size, crate::music_font::music_family());
+    let galley = painter.layout_no_wrap(glyph.to_string(), font, theme.note_text);
+    let ink = galley.mesh_bounds;
+    let bite = (size * 0.18).clamp(3.0, 10.0);
+    let pos = Pos2::new(
+        x - ink.min.x - stem_w * 0.2,
+        stem_bottom - ink.min.y - bite,
     );
+    painter.galley(pos, galley, theme.note_text);
 }
 
 /// 根音弦号：和弦中 MIDI 最低音所在弦；无音则 None

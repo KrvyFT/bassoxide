@@ -102,6 +102,41 @@ impl<'a> ScorePainter<'a> {
                         None => continue,
                     };
 
+                    // 休止符 Bravura 字形：整条谱表最底层（谱线 / 音符 / 符杆之下）
+                    if staff.staff_type == bassoxide_layout::staff::StaffType::Tablature {
+                        for measure_pos in &system.measure_positions {
+                            let m = measure_pos.measure_index;
+                            let measure_x = measure_pos.x + offset.x;
+                            let Some(measure) = track.measures.get(m) else {
+                                continue;
+                            };
+                            let voice = measure.primary_voice();
+                            let Some(beat_positions) = layout
+                                .beat_positions
+                                .get(m)
+                                .and_then(|tracks| tracks.get(track_idx))
+                            else {
+                                continue;
+                            };
+                            let merged = crate::music_font::plan_merged_rests(
+                                voice.beats.as_slice(),
+                                beat_positions,
+                                measure_x,
+                            );
+                            for r in &merged {
+                                note_render::draw_tab_rest_duration(
+                                    painter,
+                                    r.x,
+                                    staff_y,
+                                    staff.height,
+                                    r.duration,
+                                    self.settings,
+                                    self.theme,
+                                );
+                            }
+                        }
+                    }
+
                     match staff.staff_type {
                         bassoxide_layout::staff::StaffType::Standard => {
                             staff_render::draw_standard_staff(
@@ -231,51 +266,6 @@ impl<'a> ScorePainter<'a> {
                                     if let Some(beat) = voice.beats.get(bp.beat_index) {
                                         let beat_x = measure_x + bp.x;
 
-                                        if beat.is_empty()
-                                            && staff.staff_type
-                                                == bassoxide_layout::staff::StaffType::Tablature
-                                        {
-                                            // 空格 / 休止符占位：浅色竖槽，便于方向键巡格
-                                            let slot_top = staff_y + self.settings.note_pad() * 0.2;
-                                            let slot_h = (staff.height
-                                                - self.settings.note_pad() * 0.4)
-                                                .max(8.0);
-                                            let slot_w =
-                                                (bp.width * 0.55).clamp(6.0, self.settings.tab_font_size * 1.2);
-                                            painter.rect_stroke(
-                                                Rect::from_center_size(
-                                                    Pos2::new(
-                                                        beat_x,
-                                                        slot_top + slot_h * 0.5,
-                                                    ),
-                                                    Vec2::new(slot_w, slot_h),
-                                                ),
-                                                1.0,
-                                                Stroke::new(
-                                                    1.0,
-                                                    Color32::from_rgba_unmultiplied(
-                                                        120, 130, 125, 55,
-                                                    ),
-                                                ),
-                                                egui::StrokeKind::Outside,
-                                            );
-                                            // 休止符时值短线（谱表中部）
-                                            let mid_y = staff_y + staff.height * 0.45;
-                                            let rest_w = match beat.duration.value {
-                                                NoteValue::Whole => slot_w * 0.9,
-                                                NoteValue::Half => slot_w * 0.7,
-                                                NoteValue::Quarter => slot_w * 0.45,
-                                                _ => slot_w * 0.35,
-                                            };
-                                            painter.line_segment(
-                                                [
-                                                    Pos2::new(beat_x - rest_w * 0.5, mid_y),
-                                                    Pos2::new(beat_x + rest_w * 0.5, mid_y),
-                                                ],
-                                                Stroke::new(2.0, self.theme.clef_color),
-                                            );
-                                        }
-
                                         if !beat.is_empty() {
                                             for note in &beat.notes {
                                                 let selected = self.selected_measure == Some(m)
@@ -342,6 +332,7 @@ impl<'a> ScorePainter<'a> {
                                         .iter()
                                         .filter_map(|bp| {
                                             voice.beats.get(bp.beat_index).map(|beat| {
+                                                // 符杆自根音数字下沿起画（字号光学高度约 0.7em，取 ~0.38 贴底）
                                                 let stem_top = rhythm_render::root_string(beat)
                                                     .map(|s| {
                                                         staff_y
@@ -350,10 +341,16 @@ impl<'a> ScorePainter<'a> {
                                                                 staff.string_count,
                                                                 self.settings,
                                                             )
-                                                            + self.settings.tab_font_size * 0.55
+                                                            + self.settings.tab_font_size * 0.38
                                                     })
                                                     .unwrap_or_else(|| {
-                                                        staff_y + staff.height + 2.0
+                                                        staff_y
+                                                            + bassoxide_layout::tablature::string_y_offset(
+                                                                staff.string_count as u8,
+                                                                staff.string_count,
+                                                                self.settings,
+                                                            )
+                                                            + 1.5
                                                     });
                                                 RhythmBeat {
                                                     x: measure_x + bp.x,
