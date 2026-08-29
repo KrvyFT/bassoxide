@@ -332,14 +332,8 @@ impl<'a> ScorePainter<'a> {
                                         .iter()
                                         .filter_map(|bp| {
                                             voice.beats.get(bp.beat_index).map(|beat| {
-                                                // 成品谱：符杆紧贴根音数字下沿，且不低于底弦
-                                                let bottom_string_y = staff_y
-                                                    + bassoxide_layout::tablature::string_y_offset(
-                                                        staff.string_count as u8,
-                                                        staff.string_count,
-                                                        self.settings,
-                                                    );
-                                                let root_bottom = rhythm_render::root_string(beat)
+                                                // 符杆自根音数字下沿起画（不钳到底弦，避免高弦根音与杆脱节）
+                                                let stem_top = rhythm_render::root_string(beat)
                                                     .map(|s| {
                                                         staff_y
                                                             + bassoxide_layout::tablature::string_y_offset(
@@ -347,11 +341,17 @@ impl<'a> ScorePainter<'a> {
                                                                 staff.string_count,
                                                                 self.settings,
                                                             )
-                                                            + self.settings.tab_font_size * 0.48
+                                                            + self.settings.tab_font_size * 0.52
                                                     })
-                                                    .unwrap_or(bottom_string_y + 1.5);
-                                                let stem_top =
-                                                    root_bottom.max(bottom_string_y + 1.5);
+                                                    .unwrap_or_else(|| {
+                                                        staff_y
+                                                            + bassoxide_layout::tablature::string_y_offset(
+                                                                staff.string_count as u8,
+                                                                staff.string_count,
+                                                                self.settings,
+                                                            )
+                                                            + 1.5
+                                                    });
                                                 RhythmBeat {
                                                     x: measure_x + bp.x,
                                                     stem_top,

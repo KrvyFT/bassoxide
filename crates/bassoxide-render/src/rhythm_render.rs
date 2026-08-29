@@ -50,7 +50,7 @@ fn stem_fit_scale(beats: &[RhythmBeat], measure_width: f32, settings: &LayoutSet
 
 /// 绘制一小节的节奏符杆。
 ///
-/// 每个 `RhythmBeat.stem_top` 为该拍根音数字下沿；符干向下画到统一底部以便连杠。
+/// 每个 `RhythmBeat.stem_top` 为该拍**根音**数字下沿；符干由此向下画到统一底部以便连杠。
 /// `measure_width` 用于按小节实际宽度压缩符杆。
 pub fn draw_measure_rhythm(
     painter: &Painter,
