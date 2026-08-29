@@ -252,18 +252,20 @@ fn draw_flag_glyph(
     };
     let font = egui::FontId::new(size, crate::music_font::music_family());
     let galley = painter.layout_no_wrap(glyph.to_string(), font, theme.note_text);
-    // mesh_bounds 是实际三角网格（墨水），不是含大量空白的 em 字框
+    // mesh_bounds 是实际三角网格；仍含抗锯齿淡边，再额外上提咬合
     let ink = galley.mesh_bounds;
-    // 符干底端对齐墨水左上；略上移 1px 咬合
-    let overlap = stem_w.max(1.0);
-    let pos = Pos2::new(x - ink.min.x - stem_w * 0.25, stem_bottom - ink.min.y - overlap);
+    let bite = (size * 0.22).clamp(4.0, 12.0);
+    let pos = Pos2::new(
+        x - ink.min.x - stem_w * 0.2,
+        stem_bottom - ink.min.y - bite,
+    );
     painter.galley(pos, galley, theme.note_text);
-    // 符干再向下盖进符尾，确保视觉相连
-    let into = (ink.height() * 0.22).clamp(3.0, 10.0);
+    // 符干贯穿符尾附着区，盖住接缝
+    let into = (size * 0.38).clamp(6.0, 16.0);
     painter.line_segment(
         [
             Pos2::new(x, stem_bottom - into),
-            Pos2::new(x, stem_bottom + into),
+            Pos2::new(x, stem_bottom + into * 0.85),
         ],
         Stroke::new(stem_w, theme.note_text),
     );
