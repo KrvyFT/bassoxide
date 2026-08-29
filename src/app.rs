@@ -391,10 +391,10 @@ impl BassoxideApp {
             edit::move_cursor(&mut self.state, CursorMove::Right);
         }
 
-        // Insert / I
+        // Insert / I：按当前工具写入（音符或休止）
         if ctx.input(|i| i.key_pressed(egui::Key::Insert) || (i.key_pressed(egui::Key::I) && !cmd))
         {
-            edit::insert_note(&mut self.state);
+            edit::apply_tool_at_cursor(&mut self.state);
         }
         if ctx.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
             edit::delete_note(&mut self.state);
@@ -610,6 +610,21 @@ impl eframe::App for BassoxideApp {
             )
             .show(ctx, |ui| {
                 transport::transport_bar(ui, &mut self.state);
+            });
+
+        // 左侧：音符 / 休止符 / 标记工具
+        egui::SidePanel::left("tool_palette")
+            .resizable(true)
+            .default_width(148.0)
+            .min_width(120.0)
+            .max_width(220.0)
+            .frame(
+                egui::Frame::side_top_panel(&ctx.style())
+                    .fill(palette.surface_container)
+                    .inner_margin(egui::Margin::symmetric(8, 8)),
+            )
+            .show(ctx, |ui| {
+                crate::ui::tool_palette::tool_palette(ui, &mut self.state, &palette);
             });
 
         // 底部整体：音频同步轨 + 轨道（贴边、无圆角；固定高度避免鼠标误触拉伸上移）

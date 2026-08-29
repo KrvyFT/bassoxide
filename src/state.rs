@@ -6,6 +6,7 @@ use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
 use bassoxide_core::song::Song;
+use bassoxide_core::types::NoteValue;
 use bassoxide_layout::engine::{LayoutEngine, LayoutResult};
 use bassoxide_layout::spacing::LayoutSettings;
 use bassoxide_layout::PaperSize;
@@ -52,6 +53,45 @@ impl From<CursorPosition> for NoteRef {
             measure: c.measure,
             beat: c.beat,
             string: c.string,
+        }
+    }
+}
+
+/// 左侧编辑工具类别
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EditToolKind {
+    #[default]
+    Note,
+    Rest,
+    Marker,
+}
+
+/// 当前选用的谱面输入工具（时值 + 类别）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditTool {
+    pub kind: EditToolKind,
+    pub duration: NoteValue,
+    pub dotted: bool,
+}
+
+impl Default for EditTool {
+    fn default() -> Self {
+        Self {
+            kind: EditToolKind::Note,
+            duration: NoteValue::Quarter,
+            dotted: false,
+        }
+    }
+}
+
+impl EditTool {
+    pub fn slot_duration(self) -> bassoxide_core::types::Duration {
+        bassoxide_core::types::Duration {
+            value: self.duration,
+            dotted: self.dotted,
+            double_dotted: false,
+            tuplet_numerator: 1,
+            tuplet_denominator: 1,
         }
     }
 }
@@ -181,6 +221,8 @@ pub struct AppState {
     pub drag_select_origin: Option<egui::Pos2>,
     /// 拖选起点光标格
     pub drag_select_anchor: Option<CursorPosition>,
+    /// 左侧工具栏当前工具（音符 / 休止符 / 标记）
+    pub edit_tool: EditTool,
 }
 
 impl Default for AppState {
@@ -230,6 +272,7 @@ impl Default for AppState {
             selection: ScoreSelection::default(),
             drag_select_origin: None,
             drag_select_anchor: None,
+            edit_tool: EditTool::default(),
         };
         state.apply_score_prefs();
         state

@@ -1,6 +1,6 @@
 //! 六线谱下方的节奏符杆渲染（符干 stem、符杠 beam、符尾 flag、附点 dot）。
 //!
-//! Guitar Pro 风格：每个 beat 在六线谱下方画一根向下的符干，
+//! Guitar Pro 风格：每个 beat 从根音数字下方起画向下的符干，
 //! 时值短于四分音符时用符杠连接相邻音符，孤立音符画符尾，附点画圆点。
 
 use egui::{Painter, Pos2, Stroke};
@@ -15,6 +15,8 @@ use crate::colors::Theme;
 pub struct RhythmBeat<'a> {
     /// 绝对 X 坐标（符干所在位置）
     pub x: f32,
+    /// 符干顶端 Y：根音品格数字下沿
+    pub stem_top: f32,
     pub beat: &'a Beat,
 }
 
@@ -43,18 +45,16 @@ fn stem_fit_scale(beats: &[RhythmBeat], measure_width: f32, settings: &LayoutSet
     };
     let dens_s = (avg_gap / ref_gap).clamp(0.55, 1.05);
 
-    // 取更紧的一侧，但保留更高下限，避免符杆缩成短 stubs
     (measure_s * dens_s).sqrt().clamp(0.55, 1.05)
 }
 
 /// 绘制一小节的节奏符杆。
 ///
-/// `baseline_y` 为符干顶端 Y（一般是六线谱底线下方一点）。
+/// 每个 `RhythmBeat.stem_top` 为该拍根音数字下沿；符干向下画到统一底部以便连杠。
 /// `measure_width` 用于按小节实际宽度压缩符杆。
 pub fn draw_measure_rhythm(
     painter: &Painter,
     beats: &[RhythmBeat],
-    baseline_y: f32,
     measure_width: f32,
     settings: &LayoutSettings,
     theme: &Theme,
@@ -64,12 +64,9 @@ pub fn draw_measure_rhythm(
     }
 
     let dens = stem_fit_scale(beats, measure_width, settings);
-    // 符杆不得超过预留 rhythm_height（谱表∈纸张已计入该高度）
     let max_stem = (settings.rhythm_height - 1.0).max(8.0);
     let stem_len = ((settings.rhythm_height * 0.82).max(settings.tab_font_size * 1.15) * dens)
         .clamp(10.0, max_stem);
-    let stem_top = baseline_y;
-    let stem_bottom = baseline_y + stem_len;
     let stem_stroke = Stroke::new(
         (settings.tab_font_size * 0.085 * dens).clamp(0.7, 2.0),
         theme.note_text,
@@ -81,11 +78,10 @@ pub fn draw_measure_rhythm(
     let dot_r = (1.1 * dens).clamp(0.7, 1.6);
     let flag_scale = dens.clamp(0.4, 1.1);
 
-    // 计算每个 beat 的节奏属性
     let n = beats.len();
     let mut levels = vec![0u8; n];
     let mut is_note = vec![false; n];
-    let mut group_id = vec![usize::MAX; n]; // beam 分组
+    let mut group_id = vec![usize::MAX; n];
     let mut running_tick: u32 = 0;
     let mut cur_group = 0usize;
     let mut prev_in_group = false;
@@ -100,7 +96,6 @@ pub fn draw_measure_rhythm(
         };
         levels[i] = lvl;
 
-        // 判断是否可与前一个连成一组：均为音符、均可连杠、且不跨越四分拍边界
         let quarter_boundary_crossed = running_tick % 960 == 0 && i > 0;
         if note && lvl >= 1 {
             if prev_in_group && !quarter_boundary_crossed {
@@ -117,7 +112,6 @@ pub fn draw_measure_rhythm(
         running_tick += rb.beat.ticks();
     }
 
-    // 统计每组大小
     let mut group_size = std::collections::HashMap::new();
     for &g in &group_id {
         if g != usize::MAX {
@@ -125,7 +119,20 @@ pub fn draw_measure_rhythm(
         }
     }
 
-    // 1. 画符干（休止符与全音符不画）
+    // 有音符的拍：统一符干底边 = 各拍 stem_top 的最大者 + stem_len
+    let mut stem_bottom_of = vec![0.0_f32; n];
+    let max_top = beats
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| is_note[*i])
+        .map(|(_, b)| b.stem_top)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let shared_bottom = if max_top.is_finite() {
+        max_top + stem_len
+    } else {
+        0.0
+    };
+
     for (i, rb) in beats.iter().enumerate() {
         if !is_note[i] {
             continue;
@@ -133,20 +140,19 @@ pub fn draw_measure_rhythm(
         if rb.beat.duration.value == NoteValue::Whole {
             continue;
         }
+        let top = rb.stem_top;
+        let bottom = shared_bottom.max(top + stem_len * 0.55);
+        stem_bottom_of[i] = bottom;
         painter.line_segment(
-            [Pos2::new(rb.x, stem_top), Pos2::new(rb.x, stem_bottom)],
+            [Pos2::new(rb.x, top), Pos2::new(rb.x, bottom)],
             stem_stroke,
         );
 
-        // 附点
         if rb.beat.duration.dotted || rb.beat.duration.double_dotted {
             let dots = if rb.beat.duration.double_dotted { 2 } else { 1 };
             for d in 0..dots {
                 painter.circle_filled(
-                    Pos2::new(
-                        rb.x + (3.5 + d as f32 * 3.0) * dens,
-                        stem_bottom - 1.5 * dens,
-                    ),
+                    Pos2::new(rb.x + (3.5 + d as f32 * 3.0) * dens, bottom - 1.5 * dens),
                     dot_r,
                     theme.note_text,
                 );
@@ -154,16 +160,20 @@ pub fn draw_measure_rhythm(
         }
     }
 
-    // 2. 画符杠 / 符尾
+    let beam_base = if shared_bottom > 0.0 {
+        shared_bottom
+    } else {
+        beats.first().map(|b| b.stem_top + stem_len).unwrap_or(0.0)
+    };
+
     for level in 1..=4u8 {
-        let beam_y = stem_bottom - (level as f32 - 1.0) * beam_gap;
+        let beam_y = beam_base - (level as f32 - 1.0) * beam_gap;
         let mut i = 0usize;
         while i < n {
             if !(is_note[i] && levels[i] >= level) {
                 i += 1;
                 continue;
             }
-            // 找到当前组内该级别的连续段
             let g = group_id[i];
             let in_group = g != usize::MAX && group_size.get(&g).copied().unwrap_or(0) >= 2;
 
@@ -178,13 +188,11 @@ pub fn draw_measure_rhythm(
             }
 
             if j > i {
-                // 连续 >=2 个：画完整符杠
                 painter.line_segment(
                     [Pos2::new(beats[i].x, beam_y), Pos2::new(beats[j].x, beam_y)],
                     Stroke::new(beam_thickness, theme.note_text),
                 );
             } else if in_group {
-                // 组内但该级别孤立：画一小段部分符杠（指向组内方向）
                 let dir = if i > 0 && group_id[i - 1] == g {
                     -1.0
                 } else {
@@ -198,7 +206,6 @@ pub fn draw_measure_rhythm(
                     Stroke::new(beam_thickness, theme.note_text),
                 );
             } else {
-                // 完全孤立的音符：画符尾（旗）
                 draw_flag(painter, beats[i].x, beam_y, flag_scale, theme);
             }
             i = j + 1;
@@ -216,4 +223,12 @@ fn draw_flag(painter: &Painter, x: f32, y: f32, scale: f32, theme: &Theme) {
         ],
         stroke,
     );
+}
+
+/// 根音弦号：和弦中 MIDI 最低音所在弦；无音则 None
+pub fn root_string(beat: &Beat) -> Option<u8> {
+    beat.notes
+        .iter()
+        .min_by_key(|n| (n.midi_note, std::cmp::Reverse(n.string)))
+        .map(|n| n.string)
 }
