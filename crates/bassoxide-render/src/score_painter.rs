@@ -227,24 +227,31 @@ impl<'a> ScorePainter<'a> {
                                     .map(|bp| (bp.beat_index, measure_x + bp.x))
                                     .collect();
 
+                                // 休止符：连续空格自动合并为更大时值（仅显示层）
+                                if staff.staff_type
+                                    == bassoxide_layout::staff::StaffType::Tablature
+                                {
+                                    let merged = crate::music_font::plan_merged_rests(
+                                        voice.beats.as_slice(),
+                                        beat_positions,
+                                        measure_x,
+                                    );
+                                    for r in &merged {
+                                        note_render::draw_tab_rest_value(
+                                            painter,
+                                            r.x,
+                                            staff_y,
+                                            staff.height,
+                                            r.value,
+                                            self.settings,
+                                            self.theme,
+                                        );
+                                    }
+                                }
+
                                 for bp in beat_positions {
                                     if let Some(beat) = voice.beats.get(bp.beat_index) {
                                         let beat_x = measure_x + bp.x;
-
-                                        if beat.is_empty()
-                                            && staff.staff_type
-                                                == bassoxide_layout::staff::StaffType::Tablature
-                                        {
-                                            note_render::draw_tab_rest(
-                                                painter,
-                                                beat_x,
-                                                staff_y,
-                                                staff.height,
-                                                beat.duration,
-                                                self.settings,
-                                                self.theme,
-                                            );
-                                        }
 
                                         if !beat.is_empty() {
                                             for note in &beat.notes {
@@ -312,7 +319,7 @@ impl<'a> ScorePainter<'a> {
                                         .iter()
                                         .filter_map(|bp| {
                                             voice.beats.get(bp.beat_index).map(|beat| {
-                                                // 成品谱：符杆自最底弦线下沿起画（X 对齐根音数字）
+                                                // 成品谱：符杆紧贴根音数字下沿，且不低于底弦
                                                 let bottom_string_y = staff_y
                                                     + bassoxide_layout::tablature::string_y_offset(
                                                         staff.string_count as u8,
@@ -327,12 +334,11 @@ impl<'a> ScorePainter<'a> {
                                                                 staff.string_count,
                                                                 self.settings,
                                                             )
-                                                            + self.settings.tab_font_size * 0.52
+                                                            + self.settings.tab_font_size * 0.48
                                                     })
-                                                    .unwrap_or(bottom_string_y);
-                                                // 取根音数字下沿与底弦下方的较大者，保证杆在谱表外且从根音下伸出
-                                                let stem_top = root_bottom
-                                                    .max(bottom_string_y + 2.0);
+                                                    .unwrap_or(bottom_string_y + 1.5);
+                                                let stem_top =
+                                                    root_bottom.max(bottom_string_y + 1.5);
                                                 RhythmBeat {
                                                     x: measure_x + bp.x,
                                                     stem_top,

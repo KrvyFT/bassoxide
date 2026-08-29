@@ -31,9 +31,20 @@ impl BassoxideApp {
         app
     }
 
-    /// 配置字体：追加系统中文字体作为 fallback
+    /// 配置字体：CJK fallback + Bravura 乐谱字体（休止符/符尾）
     fn configure_fonts(ctx: &egui::Context) {
         let mut fonts = egui::FontDefinitions::default();
+
+        // 嵌入 Bravura（SMuFL），用于真实休止符与符尾
+        let bravura = include_bytes!("../assets/fonts/Bravura.otf");
+        fonts.font_data.insert(
+            "bravura".to_owned(),
+            std::sync::Arc::new(egui::FontData::from_static(bravura)),
+        );
+        fonts.families.insert(
+            egui::FontFamily::Name(bassoxide_render::MUSIC_FAMILY_NAME.into()),
+            vec!["bravura".to_owned()],
+        );
 
         // 尝试按优先级加载系统 CJK 字体
         let cjk_font_paths = [
@@ -52,7 +63,6 @@ impl BassoxideApp {
                     std::sync::Arc::new(egui::FontData::from_owned(font_data)),
                 );
 
-                // 将 CJK 字体追加到 Proportional 和 Monospace 的 fallback 链
                 if let Some(families) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
                     families.push("noto_sans_cjk".to_string());
                 }
@@ -70,6 +80,7 @@ impl BassoxideApp {
             tracing::warn!("未找到系统 CJK 字体，中文可能无法正常显示");
         }
 
+        tracing::info!("已嵌入 Bravura 乐谱字体");
         ctx.set_fonts(fonts);
     }
 

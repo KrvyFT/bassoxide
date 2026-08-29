@@ -65,19 +65,18 @@ pub fn draw_measure_rhythm(
 
     let dens = stem_fit_scale(beats, measure_width, settings);
     let max_stem = (settings.rhythm_height - 1.0).max(8.0);
-    let stem_len = ((settings.rhythm_height * 0.88).max(settings.tab_font_size * 1.35) * dens)
-        .clamp(12.0, max_stem);
-    let stem_stroke = Stroke::new(
-        (settings.tab_font_size * 0.095 * dens).clamp(0.85, 2.2),
-        theme.note_text,
-    );
-    // 成品谱符杠明显粗于符干
-    let beam_thickness = ((settings.tab_font_size * 0.2).max(settings.rhythm_height * 0.1) * dens)
-        .clamp(1.6, 3.6);
-    let beam_gap = (beam_thickness + 1.6 * dens).max(2.4);
-    let stub_len = (6.0 * dens).max(3.0);
-    let dot_r = (1.2 * dens).clamp(0.8, 1.8);
-    let flag_scale = dens.clamp(0.45, 1.15);
+    // 成品谱：符干略长，保证与底弦有清晰空隙后仍够连杠
+    let stem_len = ((settings.rhythm_height * 0.92).max(settings.tab_font_size * 1.55) * dens)
+        .clamp(14.0, max_stem);
+    let stem_w = (settings.tab_font_size * 0.11 * dens).clamp(1.0, 2.4);
+    let stem_stroke = Stroke::new(stem_w, theme.note_text);
+    // 符杠：粗实心横条（接近 GP / 参考图）
+    let beam_thickness = ((settings.tab_font_size * 0.28).max(settings.rhythm_height * 0.12) * dens)
+        .clamp(2.2, 4.5);
+    let beam_gap = (beam_thickness + 1.8 * dens).max(2.8);
+    let stub_len = (7.0 * dens).max(3.5);
+    let dot_r = (1.35 * dens).clamp(0.9, 2.0);
+    let flag_size = (settings.tab_font_size * 1.65 * dens).clamp(14.0, 34.0);
 
     let n = beats.len();
     let mut levels = vec![0u8; n];
@@ -189,9 +188,16 @@ pub fn draw_measure_rhythm(
             }
 
             if j > i {
-                painter.line_segment(
-                    [Pos2::new(beats[i].x, beam_y), Pos2::new(beats[j].x, beam_y)],
-                    Stroke::new(beam_thickness, theme.note_text),
+                // 实心符杠矩形，观感更接近成品谱
+                let x0 = beats[i].x.min(beats[j].x);
+                let x1 = beats[i].x.max(beats[j].x);
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        Pos2::new(x0, beam_y - beam_thickness * 0.5),
+                        Pos2::new(x1, beam_y + beam_thickness * 0.5),
+                    ),
+                    0.0,
+                    theme.note_text,
                 );
             } else if in_group {
                 let dir = if i > 0 && group_id[i - 1] == g {
@@ -199,37 +205,52 @@ pub fn draw_measure_rhythm(
                 } else {
                     1.0
                 };
-                painter.line_segment(
-                    [
-                        Pos2::new(beats[i].x, beam_y),
-                        Pos2::new(beats[i].x + dir * stub_len, beam_y),
-                    ],
-                    Stroke::new(beam_thickness, theme.note_text),
+                let x0 = beats[i].x;
+                let x1 = beats[i].x + dir * stub_len;
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        Pos2::new(x0.min(x1), beam_y - beam_thickness * 0.5),
+                        Pos2::new(x0.max(x1), beam_y + beam_thickness * 0.5),
+                    ),
+                    0.0,
+                    theme.note_text,
                 );
-            } else {
-                draw_flag(painter, beats[i].x, beam_y, flag_scale, theme);
+            } else if level == levels[i] {
+                // 仅最深一层画一次符尾（Bravura 字形）
+                draw_flag_glyph(
+                    painter,
+                    beats[i].x,
+                    beam_base,
+                    levels[i],
+                    flag_size,
+                    theme,
+                );
             }
             i = j + 1;
         }
     }
 }
 
-/// 绘制符尾（旗），向右下弯钩，接近成品谱面
-fn draw_flag(painter: &Painter, x: f32, y: f32, scale: f32, theme: &Theme) {
-    let stroke = Stroke::new((1.55 * scale).clamp(0.9, 2.2), theme.note_text);
-    let w = 7.5 * scale;
-    let h = 5.5 * scale;
-    // 两段折线近似弯旗
-    painter.line_segment(
-        [Pos2::new(x, y), Pos2::new(x + w * 0.55, y + h * 0.35)],
-        stroke,
-    );
-    painter.line_segment(
-        [
-            Pos2::new(x + w * 0.55, y + h * 0.35),
-            Pos2::new(x + w * 0.15, y + h),
-        ],
-        stroke,
+/// Bravura 符尾字形（向下），锚在符干底端
+fn draw_flag_glyph(
+    painter: &Painter,
+    x: f32,
+    stem_bottom: f32,
+    level: u8,
+    size: f32,
+    theme: &Theme,
+) {
+    let Some(glyph) = crate::music_font::flag_glyph_down(level) else {
+        return;
+    };
+    let font = egui::FontId::new(size, crate::music_font::music_family());
+    // SMuFL 向下旗：附着点在符干底端，字形向右下展开
+    painter.text(
+        Pos2::new(x, stem_bottom),
+        egui::Align2::LEFT_TOP,
+        glyph.to_string(),
+        font,
+        theme.note_text,
     );
 }
 
