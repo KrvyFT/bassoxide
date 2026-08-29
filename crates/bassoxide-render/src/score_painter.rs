@@ -332,7 +332,7 @@ impl<'a> ScorePainter<'a> {
                                         .iter()
                                         .filter_map(|bp| {
                                             voice.beats.get(bp.beat_index).map(|beat| {
-                                                // 符杆自根音数字下沿起画（不钳到底弦，避免高弦根音与杆脱节）
+                                                // 符杆自根音数字下沿起画（字号光学高度约 0.7em，取 ~0.38 贴底）
                                                 let stem_top = rhythm_render::root_string(beat)
                                                     .map(|s| {
                                                         staff_y
@@ -341,7 +341,7 @@ impl<'a> ScorePainter<'a> {
                                                                 staff.string_count,
                                                                 self.settings,
                                                             )
-                                                            + self.settings.tab_font_size * 0.52
+                                                            + self.settings.tab_font_size * 0.38
                                                     })
                                                     .unwrap_or_else(|| {
                                                         staff_y
