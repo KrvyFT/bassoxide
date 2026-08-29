@@ -166,7 +166,7 @@ fn ensure_beat_exists(state: &mut AppState) {
     let voice = track.measures[state.cursor.measure].primary_voice_mut();
     if voice.beats.is_empty() {
         voice.beats.push(Beat {
-            duration: Duration::default(),
+            duration: state.edit_tool.slot_duration(),
             is_rest: true,
             ..Beat::default()
         });
@@ -456,6 +456,9 @@ pub fn toggle_dotted(state: &mut AppState) {
 /// 设置拍时值
 pub fn set_duration(state: &mut AppState, value: NoteValue) {
     sync_track(state);
+    // 同步左侧工具时值，并按此时值重划分当前轨道小节空格
+    state.edit_tool.duration = value;
+    apply_duration_grid(state);
     let Some(song) = state.song.as_mut() else {
         return;
     };
@@ -471,9 +474,243 @@ pub fn set_duration(state: &mut AppState, value: NoteValue) {
         .and_then(|m| m.primary_voice_mut().beats.get_mut(beat_idx))
     {
         beat.duration.value = value;
+        beat.duration.dotted = state.edit_tool.dotted;
         state.needs_relayout = true;
         state.status_message = format!("时值 {:?}", value);
         refresh_duration_status(state);
+    }
+}
+
+/// 选用左侧工具：音符 / 休止符（带时值）会重划分小节空格；标记打开编辑器
+pub fn select_edit_tool(
+    state: &mut AppState,
+    kind: crate::state::EditToolKind,
+    duration: Option<NoteValue>,
+) {
+    use crate::state::EditToolKind;
+    if let Some(d) = duration {
+        state.edit_tool.duration = d;
+    }
+    state.edit_tool.kind = kind;
+    match kind {
+        EditToolKind::Note | EditToolKind::Rest => {
+            apply_duration_grid(state);
+            let slots = slots_per_measure(state).unwrap_or(0);
+            let label = match kind {
+                EditToolKind::Note => "音符",
+                EditToolKind::Rest => "休止符",
+                EditToolKind::Marker => "标记",
+            };
+            state.status_message = format!(
+                "工具: {} {:?} · 每小节 {} 格",
+                label, state.edit_tool.duration, slots
+            );
+        }
+        EditToolKind::Marker => {
+            state.status_message = "工具: 小节标记".into();
+            state.marker_editor_open = true;
+            if let Some(song) = state.song.as_ref() {
+                if let Some(mb) = song.master_bar(state.cursor.measure) {
+                    state.marker_edit_name = mb
+                        .marker
+                        .as_ref()
+                        .map(|m| m.name.clone())
+                        .unwrap_or_default();
+                }
+            }
+        }
+    }
+    state.fret_input.clear();
+}
+
+/// 当前拍号下，所选时值能整除时的每小节空格数
+pub fn slots_per_measure(state: &AppState) -> Option<usize> {
+    let song = state.song.as_ref()?;
+    let measure = state.cursor.measure;
+    let master = song.master_bar(measure)?;
+    let measure_ticks = master.time_signature.measure_ticks();
+    let slot = state.edit_tool.slot_duration().ticks();
+    if slot == 0 || measure_ticks % slot != 0 {
+        return None;
+    }
+    Some((measure_ticks / slot) as usize)
+}
+
+/// 按当前工具时值，将当前轨道每个小节重分为等长空格（尽量按 tick 保留原音符）
+pub fn apply_duration_grid(state: &mut AppState) {
+    sync_track(state);
+    let slot_dur = state.edit_tool.slot_duration();
+    let slot_ticks = slot_dur.ticks();
+    if slot_ticks == 0 {
+        return;
+    }
+    let track_idx = state.cursor.track;
+    let cursor_measure = state.cursor.measure;
+    let cursor_beat = state.cursor.beat;
+    let cursor_tick_hint = {
+        // 尽量保持光标所在 tick，划分后落回对应空格
+        let mut tick = 0u32;
+        if let Some(song) = state.song.as_ref() {
+            if let Some(track) = song.tracks.get(track_idx) {
+                if let Some(m) = track.measures.get(cursor_measure) {
+                    for (i, b) in m.primary_voice().beats.iter().enumerate() {
+                        if i >= cursor_beat {
+                            break;
+                        }
+                        tick = tick.saturating_add(b.ticks());
+                    }
+                }
+            }
+        }
+        tick
+    };
+
+    let Some(song) = state.song.as_mut() else {
+        return;
+    };
+    if song.tracks.is_empty() {
+        return;
+    }
+    let track_idx = track_idx.min(song.tracks.len() - 1);
+    let n_measures = song.tracks[track_idx].measures.len();
+    let mut changed = false;
+
+    for mi in 0..n_measures {
+        let measure_ticks = song
+            .master_bar(mi)
+            .map(|m| m.time_signature.measure_ticks())
+            .unwrap_or(3840);
+        if measure_ticks % slot_ticks != 0 {
+            continue;
+        }
+        let n_slots = (measure_ticks / slot_ticks) as usize;
+        if n_slots == 0 {
+            continue;
+        }
+
+        let old_beats = song.tracks[track_idx].measures[mi]
+            .primary_voice()
+            .beats
+            .clone();
+        // 已是目标网格则跳过（避免无谓重排）
+        if old_beats.len() == n_slots
+            && old_beats
+                .iter()
+                .all(|b| b.duration.ticks() == slot_ticks)
+        {
+            continue;
+        }
+
+        let mut by_tick: Vec<(u32, Vec<Note>)> = Vec::new();
+        let mut t = 0u32;
+        for b in &old_beats {
+            if !b.notes.is_empty() {
+                by_tick.push((t, b.notes.clone()));
+            }
+            t = t.saturating_add(b.ticks());
+        }
+
+        let mut new_beats = Vec::with_capacity(n_slots);
+        for si in 0..n_slots {
+            let start = si as u32 * slot_ticks;
+            let end = start + slot_ticks;
+            let mut notes = Vec::new();
+            for (tick, ns) in &by_tick {
+                if *tick >= start && *tick < end {
+                    for n in ns {
+                        if notes.iter().all(|x: &Note| x.string != n.string) {
+                            notes.push(n.clone());
+                        }
+                    }
+                }
+            }
+            let is_rest = notes.is_empty();
+            new_beats.push(Beat {
+                duration: slot_dur,
+                notes,
+                is_rest,
+                start_tick: start,
+                ..Beat::default()
+            });
+        }
+        song.tracks[track_idx].measures[mi]
+            .primary_voice_mut()
+            .beats = new_beats;
+        changed = true;
+    }
+
+    if changed {
+        state.needs_relayout = true;
+        // 光标落到原 tick 对应空格
+        let new_beat = (cursor_tick_hint / slot_ticks) as usize;
+        if let Some(song) = state.song.as_ref() {
+            if let Some(m) = song.tracks.get(track_idx).and_then(|t| t.measures.get(cursor_measure))
+            {
+                let len = m.primary_voice().beats.len();
+                state.cursor.beat = new_beat.min(len.saturating_sub(1));
+            }
+        }
+        clamp_cursor_from_state(state);
+    }
+}
+
+fn clamp_cursor_from_state(state: &mut AppState) {
+    if let Some(song) = state.song.as_ref() {
+        let mut c = state.cursor;
+        clamp_cursor(song, &mut c);
+        state.cursor = c;
+    }
+}
+
+/// 在光标格写入休止符（清空音符）
+pub fn insert_rest_at_cursor(state: &mut AppState) {
+    ensure_beat_exists(state);
+    let slot_dur = state.edit_tool.slot_duration();
+    let Some(song) = state.song.as_mut() else {
+        return;
+    };
+    if song.tracks.is_empty() {
+        return;
+    }
+    let track_idx = state.cursor.track;
+    let Some(beat) = song.tracks[track_idx]
+        .measures
+        .get_mut(state.cursor.measure)
+        .and_then(|m| m.primary_voice_mut().beats.get_mut(state.cursor.beat))
+    else {
+        return;
+    };
+    beat.notes.clear();
+    beat.is_rest = true;
+    beat.duration = slot_dur;
+    state.needs_relayout = true;
+    state.status_message = "已写入休止符".into();
+    refresh_duration_status(state);
+    state.fret_input.clear();
+}
+
+/// 按工具写入：休止工具 → 休止；音符工具 → 插入空弦音
+pub fn apply_tool_at_cursor(state: &mut AppState) {
+    use crate::state::EditToolKind;
+    match state.edit_tool.kind {
+        EditToolKind::Rest => insert_rest_at_cursor(state),
+        EditToolKind::Note => {
+            // 保证时值与工具一致后再插音
+            ensure_beat_exists(state);
+            let slot_dur = state.edit_tool.slot_duration();
+            if let Some(song) = state.song.as_mut() {
+                if let Some(beat) = song.tracks.get_mut(state.cursor.track)
+                    .and_then(|t| t.measures.get_mut(state.cursor.measure))
+                    .and_then(|m| m.primary_voice_mut().beats.get_mut(state.cursor.beat))
+                {
+                    beat.duration = slot_dur;
+                }
+            }
+            insert_note(state);
+        }
+        EditToolKind::Marker => {
+            state.marker_editor_open = true;
+        }
     }
 }
 
@@ -773,5 +1010,45 @@ mod tests {
             .fret;
         assert_eq!(fret, -1);
         assert_eq!(bassoxide_layout::tablature::fret_display(fret), "-1");
+    }
+
+    #[test]
+    fn eighth_tool_grids_measure_into_eight_slots() {
+        let mut state = AppState::default();
+        state.load_song(song_one_measure(), None);
+        // 先放一个四分音符在 beat0
+        state.cursor.string = 6;
+        set_fret(&mut state, 3);
+        select_edit_tool(&mut state, crate::state::EditToolKind::Note, Some(NoteValue::Eighth));
+        let beats = &state.song.as_ref().unwrap().tracks[0].measures[0]
+            .primary_voice()
+            .beats;
+        assert_eq!(beats.len(), 8);
+        assert!(beats.iter().all(|b| b.duration.ticks() == 480));
+        // 原音符应落在第 0 格
+        assert!(!beats[0].is_empty());
+        assert_eq!(beats[0].notes[0].fret, 3);
+        assert!(beats[1].is_rest || beats[1].notes.is_empty());
+        assert_eq!(slots_per_measure(&state), Some(8));
+
+        move_cursor(&mut state, CursorMove::Right);
+        assert_eq!(state.cursor.beat, 1);
+        move_cursor(&mut state, CursorMove::Right);
+        assert_eq!(state.cursor.beat, 2);
+    }
+
+    #[test]
+    fn rest_tool_clears_cursor_slot() {
+        let mut state = AppState::default();
+        state.load_song(song_one_measure(), None);
+        state.cursor.string = 1;
+        set_fret(&mut state, 5);
+        select_edit_tool(&mut state, crate::state::EditToolKind::Rest, Some(NoteValue::Quarter));
+        insert_rest_at_cursor(&mut state);
+        let beat = &state.song.as_ref().unwrap().tracks[0].measures[0]
+            .primary_voice()
+            .beats[0];
+        assert!(beat.is_rest);
+        assert!(beat.notes.is_empty());
     }
 }
