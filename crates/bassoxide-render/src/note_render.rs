@@ -22,9 +22,9 @@ pub fn draw_tab_note(
 ) {
     let string_y =
         staff_y + tablature::string_y_offset(note.string, string_count, settings);
-    let text = tablature::fret_display(note.fret);
+    let text = tablature::tab_note_text(note);
 
-    let font = egui::FontId::new(settings.tab_font_size, egui::FontFamily::Monospace);
+    let font = egui::FontId::new(settings.tab_font_size, egui::FontFamily::Proportional);
     let color = if is_selected {
         theme.selected_note
     } else {
@@ -32,14 +32,20 @@ pub fn draw_tab_note(
     };
 
     // 先画一个小背景矩形清除弦线（让数字清晰可读）
-    let text_size = Vec2::new(settings.tab_font_size * 0.8, settings.tab_font_size);
+    let char_w = if text.len() > 2 {
+        settings.tab_font_size * 1.15
+    } else if text.len() > 1 {
+        settings.tab_font_size * 0.95
+    } else {
+        settings.tab_font_size * 0.7
+    };
+    let text_size = Vec2::new(char_w, settings.tab_font_size);
     let bg_rect = Rect::from_center_size(
         Pos2::new(x, string_y),
-        text_size + Vec2::new(4.0, 2.0),
+        text_size + Vec2::new(3.0, 1.5),
     );
     painter.rect_filled(bg_rect, 0.0, theme.background);
 
-    // 绘制品格数字
     painter.text(
         Pos2::new(x, string_y),
         egui::Align2::CENTER_CENTER,
@@ -47,6 +53,90 @@ pub fn draw_tab_note(
         font,
         color,
     );
+}
+
+/// 在 TAB 谱表中部绘制休止符（成品谱面风格几何符号）
+pub fn draw_tab_rest(
+    painter: &Painter,
+    x: f32,
+    staff_y: f32,
+    staff_height: f32,
+    duration: bassoxide_core::types::Duration,
+    settings: &LayoutSettings,
+    theme: &Theme,
+) {
+    use bassoxide_core::types::NoteValue;
+    let mid_y = staff_y + staff_height * 0.5;
+    let s = (settings.tab_font_size * 0.12).clamp(0.85, 1.35);
+    let color = theme.rest_color;
+    let stroke = egui::Stroke::new((1.4 * s).clamp(1.0, 2.2), color);
+
+    match duration.value {
+        NoteValue::Whole | NoteValue::Half => {
+            // 全/半休止：谱表中部短粗横块（全休止略偏上）
+            let w = (settings.tab_font_size * 0.95 * s).max(8.0);
+            let h = (settings.tab_font_size * 0.28 * s).max(3.0);
+            let y = if duration.value == NoteValue::Whole {
+                mid_y - h * 0.9
+            } else {
+                mid_y - h * 0.15
+            };
+            painter.rect_filled(
+                Rect::from_min_size(Pos2::new(x - w * 0.5, y), Vec2::new(w, h)),
+                0.0,
+                color,
+            );
+        }
+        NoteValue::Quarter => {
+            // 四分休止：锯齿折线
+            let h = settings.tab_font_size * 1.15 * s;
+            let w = settings.tab_font_size * 0.35 * s;
+            let top = mid_y - h * 0.5;
+            let pts = [
+                Pos2::new(x + w * 0.2, top),
+                Pos2::new(x - w * 0.5, top + h * 0.28),
+                Pos2::new(x + w * 0.45, top + h * 0.5),
+                Pos2::new(x - w * 0.55, top + h * 0.72),
+                Pos2::new(x + w * 0.15, top + h),
+            ];
+            for i in 0..pts.len() - 1 {
+                painter.line_segment([pts[i], pts[i + 1]], stroke);
+            }
+        }
+        NoteValue::Eighth | NoteValue::Sixteenth | NoteValue::ThirtySecond | NoteValue::SixtyFourth =>
+        {
+            // 八分及更短：竖干 + 右侧旗钩（层数随时值）
+            let levels = match duration.value {
+                NoteValue::Eighth => 1,
+                NoteValue::Sixteenth => 2,
+                NoteValue::ThirtySecond => 3,
+                _ => 4,
+            };
+            let h = settings.tab_font_size * (0.85 + 0.12 * levels as f32) * s;
+            let top = mid_y - h * 0.45;
+            let bot = top + h;
+            painter.line_segment([Pos2::new(x, top), Pos2::new(x, bot)], stroke);
+            for i in 0..levels {
+                let fy = top + i as f32 * (settings.tab_font_size * 0.28 * s);
+                // 旗钩：向右下弯
+                painter.line_segment(
+                    [
+                        Pos2::new(x, fy),
+                        Pos2::new(x + settings.tab_font_size * 0.42 * s, fy + settings.tab_font_size * 0.22 * s),
+                    ],
+                    stroke,
+                );
+                painter.circle_filled(
+                    Pos2::new(
+                        x + settings.tab_font_size * 0.42 * s,
+                        fy + settings.tab_font_size * 0.22 * s,
+                    ),
+                    (1.6 * s).clamp(1.1, 2.4),
+                    color,
+                );
+            }
+        }
+    }
 }
 
 /// 计算 MIDI 音高在五线谱上的纵向位置 (0 = 第一线/最底线, 0.5 = 第一间)

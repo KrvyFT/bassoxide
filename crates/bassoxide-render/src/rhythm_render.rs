@@ -65,18 +65,19 @@ pub fn draw_measure_rhythm(
 
     let dens = stem_fit_scale(beats, measure_width, settings);
     let max_stem = (settings.rhythm_height - 1.0).max(8.0);
-    let stem_len = ((settings.rhythm_height * 0.82).max(settings.tab_font_size * 1.15) * dens)
-        .clamp(10.0, max_stem);
+    let stem_len = ((settings.rhythm_height * 0.88).max(settings.tab_font_size * 1.35) * dens)
+        .clamp(12.0, max_stem);
     let stem_stroke = Stroke::new(
-        (settings.tab_font_size * 0.085 * dens).clamp(0.7, 2.0),
+        (settings.tab_font_size * 0.095 * dens).clamp(0.85, 2.2),
         theme.note_text,
     );
-    let beam_thickness = ((settings.tab_font_size * 0.11).max(settings.rhythm_height * 0.07) * dens)
-        .clamp(0.9, 2.8);
-    let beam_gap = (beam_thickness + 1.2 * dens).max(1.8);
-    let stub_len = (5.0 * dens).max(2.5);
-    let dot_r = (1.1 * dens).clamp(0.7, 1.6);
-    let flag_scale = dens.clamp(0.4, 1.1);
+    // 成品谱符杠明显粗于符干
+    let beam_thickness = ((settings.tab_font_size * 0.2).max(settings.rhythm_height * 0.1) * dens)
+        .clamp(1.6, 3.6);
+    let beam_gap = (beam_thickness + 1.6 * dens).max(2.4);
+    let stub_len = (6.0 * dens).max(3.0);
+    let dot_r = (1.2 * dens).clamp(0.8, 1.8);
+    let flag_scale = dens.clamp(0.45, 1.15);
 
     let n = beats.len();
     let mut levels = vec![0u8; n];
@@ -213,13 +214,20 @@ pub fn draw_measure_rhythm(
     }
 }
 
-/// 绘制符尾（旗），向右下方弯出
+/// 绘制符尾（旗），向右下弯钩，接近成品谱面
 fn draw_flag(painter: &Painter, x: f32, y: f32, scale: f32, theme: &Theme) {
-    let stroke = Stroke::new((1.4 * scale).clamp(0.8, 2.0), theme.note_text);
+    let stroke = Stroke::new((1.55 * scale).clamp(0.9, 2.2), theme.note_text);
+    let w = 7.5 * scale;
+    let h = 5.5 * scale;
+    // 两段折线近似弯旗
+    painter.line_segment(
+        [Pos2::new(x, y), Pos2::new(x + w * 0.55, y + h * 0.35)],
+        stroke,
+    );
     painter.line_segment(
         [
-            Pos2::new(x, y),
-            Pos2::new(x + 6.5 * scale, y + 3.5 * scale),
+            Pos2::new(x + w * 0.55, y + h * 0.35),
+            Pos2::new(x + w * 0.15, y + h),
         ],
         stroke,
     );

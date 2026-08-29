@@ -16,7 +16,7 @@ pub fn draw_tab_staff(
     settings: &LayoutSettings,
     theme: &Theme,
 ) {
-    let stroke = Stroke::new(1.0_f32, theme.staff_line);
+    let stroke = Stroke::new(0.75_f32, theme.staff_line);
     let pad = settings.note_pad();
 
     for s in 0..string_count {
@@ -58,7 +58,7 @@ pub fn draw_bar_line(
     height: f32,
     theme: &Theme,
 ) {
-    let stroke = Stroke::new(1.2_f32, theme.bar_line);
+    let stroke = Stroke::new(1.0_f32, theme.bar_line);
     painter.line_segment(
         [Pos2::new(x, y), Pos2::new(x, y + height)],
         stroke,
@@ -113,7 +113,7 @@ pub fn draw_tab_clef(
     }
 }
 
-/// 绘制拍号（上下分数对齐，中间横线）
+/// 绘制拍号（上下分数，成品 TAB 风格：大号、无中线）
 pub fn draw_time_signature(
     painter: &Painter,
     x: f32,
@@ -124,13 +124,14 @@ pub fn draw_time_signature(
     settings: &LayoutSettings,
     theme: &Theme,
 ) {
-    let font_size = (settings.tab_font_size * 1.35).clamp(12.0, 28.0);
+    let font_size = (staff_height * 0.42)
+        .max(settings.tab_font_size * 1.55)
+        .clamp(14.0, 36.0);
     let font = egui::FontId::new(font_size, egui::FontFamily::Proportional);
     let cx = x;
     let mid_y = y + staff_height * 0.5;
-    let gap = (font_size * 0.55).max(8.0);
+    let gap = (font_size * 0.08).max(1.0);
 
-    // 分子
     painter.text(
         Pos2::new(cx, mid_y - gap),
         egui::Align2::CENTER_BOTTOM,
@@ -138,16 +139,6 @@ pub fn draw_time_signature(
         font.clone(),
         theme.time_sig_color,
     );
-    // 分数线
-    let bar_w = (font_size * 0.85).max(10.0);
-    painter.line_segment(
-        [
-            Pos2::new(cx - bar_w * 0.5, mid_y),
-            Pos2::new(cx + bar_w * 0.5, mid_y),
-        ],
-        Stroke::new(1.5_f32, theme.time_sig_color),
-    );
-    // 分母
     painter.text(
         Pos2::new(cx, mid_y + gap),
         egui::Align2::CENTER_TOP,
