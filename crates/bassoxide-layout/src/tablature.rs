@@ -17,13 +17,9 @@ pub fn string_y_offset(
     pad + f32::from(idx) * settings.tab_string_spacing
 }
 
-/// 计算品格数字显示文本
+/// 计算品格数字显示文本（含负品格，如改弦重映射低于空弦时）
 pub fn fret_display(fret: i8) -> String {
-    if fret < 0 {
-        "x".to_string()
-    } else {
-        fret.to_string()
-    }
+    fret.to_string()
 }
 
 /// 六线谱谱号标记 "TAB" 的各字母 Y 位置（落在弦线区内）

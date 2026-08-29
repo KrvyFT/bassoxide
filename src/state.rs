@@ -1,5 +1,6 @@
 //! 应用状态管理。
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
@@ -17,7 +18,7 @@ use crate::ui::material::MaterialPalette;
 pub type AudioJobReceiver = Receiver<Result<AudioTrack, String>>;
 
 /// 编辑器光标位置
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CursorPosition {
     pub track: usize,
     pub measure: usize,
@@ -34,6 +35,59 @@ impl Default for CursorPosition {
             beat: 0,
             string: 1,
         }
+    }
+}
+
+/// 多选音符格（当前轨道）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NoteRef {
+    pub measure: usize,
+    pub beat: usize,
+    pub string: u8,
+}
+
+impl From<CursorPosition> for NoteRef {
+    fn from(c: CursorPosition) -> Self {
+        Self {
+            measure: c.measure,
+            beat: c.beat,
+            string: c.string,
+        }
+    }
+}
+
+/// 谱面选区：多音符和/或整小节
+#[derive(Debug, Clone, Default)]
+pub struct ScoreSelection {
+    pub notes: HashSet<NoteRef>,
+    /// 整小节选中（高亮该小节全部内容）
+    pub measure: Option<usize>,
+}
+
+impl ScoreSelection {
+    pub fn clear(&mut self) {
+        self.notes.clear();
+        self.measure = None;
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.notes.is_empty() && self.measure.is_none()
+    }
+
+    pub fn select_single(&mut self, c: CursorPosition) {
+        self.clear();
+        self.notes.insert(NoteRef::from(c));
+    }
+
+    pub fn contains_note(&self, measure: usize, beat: usize, string: u8) -> bool {
+        if self.measure == Some(measure) {
+            return true;
+        }
+        self.notes.contains(&NoteRef {
+            measure,
+            beat,
+            string,
+        })
     }
 }
 
@@ -121,6 +175,12 @@ pub struct AppState {
     pub metronome_enabled: bool,
     /// 品格数字输入缓冲
     pub fret_input: crate::edit::FretInputBuffer,
+    /// 多选 / 小节选区
+    pub selection: ScoreSelection,
+    /// 拖选起点（屏幕坐标）；拖动中保留
+    pub drag_select_origin: Option<egui::Pos2>,
+    /// 拖选起点光标格
+    pub drag_select_anchor: Option<CursorPosition>,
 }
 
 impl Default for AppState {
@@ -167,6 +227,9 @@ impl Default for AppState {
             loop_enabled: false,
             metronome_enabled: false,
             fret_input: crate::edit::FretInputBuffer::default(),
+            selection: ScoreSelection::default(),
+            drag_select_origin: None,
+            drag_select_anchor: None,
         };
         state.apply_score_prefs();
         state
@@ -324,6 +387,7 @@ impl AppState {
         self.song = Some(song);
         self.needs_relayout = true;
         self.cursor = CursorPosition::default();
+        self.selection.clear();
         self.scroll_y = 0.0;
         self.sync_playback_tools_to_player();
     }
